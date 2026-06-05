@@ -1,0 +1,46 @@
+﻿# Root ignore rules
+
+# Go build/test cache
+.gocache/
+**/.gocache/
+**/.gocache*/
+GOCACHE/
+
+# Go binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Node
+**/node_modules/
+**/dist/
+
+# Wails build output
+**/build/bin/
+apps/gui/build/
+apps/gui/frontend/dist/
+
+# Local runtime data
+**/history.json
+apps/gui/config.yaml
+apps/gui/cookies.txt
+apps/cli/config.yaml
+**/config.yaml.bak
+**/cookies.txt
+download/
+logs/
+**/logs/
+apps/cli/download/
+**/*_temp_*.ts
+**/recordings/
+**/recordings_legacy/
+*.log
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/

@@ -1,0 +1,8 @@
+go 1.25.7
+
+use (
+	./apps/cli
+	./apps/gui
+)
+
+replace github.com/user/twitcasting-recorder/apps/gui v0.0.0 => ./apps/gui

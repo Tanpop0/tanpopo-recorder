@@ -1,0 +1,39 @@
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Go
+/bin/
+/src/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Node.js / Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.DS_Store
+
+# Wails Build Artifacts
+/build/bin/
+/build/wails.exe
+/build/appicon.png
+/frontend/wailsjs/
+
+# Application Data (User Specific - DO NOT COMMIT)
+cookies.txt
+config.yaml
+history.json
+*.ts
+*.mp4
+*.log
+
+# OS Specific
+.DS_Store
+Thumbs.db

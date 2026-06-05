@@ -1,0 +1,23 @@
+{
+  "mode": "record",
+  "screen_id": "example_user",
+  "title": "untitled",
+  "stream_url": "https://example.com/live.m3u8",
+  "output_dir": "./download",
+  "stop_file": "",
+  "check_interval_seconds": 30,
+  "auth": {
+    "mode": "auto",
+    "access_token": "",
+    "cookie_enabled": false,
+    "cookie_file": "cookies.txt"
+  },
+  "options": {
+    "quality_mode": "stable",
+    "container_mode": "mkv",
+    "save_info_text": false,
+    "ffmpeg_path": "",
+    "ffprobe_path": "",
+    "proxy_url": ""
+  }
+}

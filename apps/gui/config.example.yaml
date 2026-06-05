@@ -1,0 +1,46 @@
+streamers:
+  - screen_id: example_user
+    schedule: '*/1 * * * *'
+    nickname: Example
+    avatar: ''
+    quality_mode: ''
+    container_mode: ''
+    auth_mode: ''
+output_directory: ./download
+check_interval_seconds: 30
+auth_mode: auto
+oauth:
+  client_id: ''
+  client_secret: ''
+  redirect_uri: urn:ietf:wg:oauth:2.0:oob
+  access_token: ''
+cookies:
+  enabled: false
+  file_path: cookies.txt
+recording:
+  quality_mode: stable
+  container_mode: mkv
+  save_info_text: true
+  save_comments_text: true
+  save_comments_text_file: false
+  comment_text_template: '[{offset}] {display_name}: {message}'
+  min_duration_seconds: 10
+  min_file_size_mb: 0
+  startup_stagger_seconds: 2
+  ffmpeg_path: ''
+  ffprobe_path: ''
+  worker_enabled: false
+  worker_path: ''
+  worker_check_interval_seconds: 30
+  worker_max_restarts: 8
+proxy:
+  enabled: false
+  url: ''
+notifications:
+  telegram:
+    enabled: false
+    bot_token: ''
+    chat_id: ''
+    notify_on_start: true
+    notify_on_finish: true
+    notify_on_error: true

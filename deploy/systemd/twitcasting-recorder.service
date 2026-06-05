@@ -1,0 +1,16 @@
+[Unit]
+Description=TwitCasting Recorder CLI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/twitcasting-recorder
+ExecStart=/opt/twitcasting-recorder/twitcasting-recorder monitor --config /opt/twitcasting-recorder/config.yaml
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

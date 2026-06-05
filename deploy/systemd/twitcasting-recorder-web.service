@@ -1,0 +1,16 @@
+[Unit]
+Description=TwitCasting Recorder Web Panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/twitcasting-recorder
+ExecStart=/opt/twitcasting-recorder/twitcasting-recorder web --config /opt/twitcasting-recorder/config.yaml --addr 127.0.0.1:8787
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

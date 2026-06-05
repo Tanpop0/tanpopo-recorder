@@ -1,0 +1,55 @@
+/* Global Reset & Base Styles */
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden; /* Prevent global scrollbars */
+    background-color: #f8fafc; /* Lighter, cooler gray */
+    color: #334155; /* Slate 700 */
+    font-family: 'Nunito', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+#app {
+    width: 100%;
+    height: 100%;
+}
+
+/* Custom Scrollbar for WebKit */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #cbd5e1; /* Slate 300 */
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8; /* Slate 400 */
+}
+
+/* Fonts */
+@font-face {
+    font-family: "Nunito";
+    font-style: normal;
+    font-weight: 400;
+    src: local(""),
+    url("assets/fonts/nunito-v16-latin-regular.woff2") format("woff2");
+}
+
+/* Element Plus Overrides for a cleaner look */
+:root {
+    --el-color-primary: #6366f1; /* Indigo 500 */
+    --el-color-success: #10b981; /* Emerald 500 */
+    --el-color-warning: #f59e0b; /* Amber 500 */
+    --el-color-danger: #ef4444; /* Red 500 */
+    --el-border-radius-base: 8px;
+}
