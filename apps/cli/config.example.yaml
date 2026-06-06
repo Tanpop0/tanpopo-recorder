@@ -49,3 +49,4 @@ streamers:
     schedule: '@every 30s'
     quality_mode: stable
     container_mode: mkv
+    telegram_enabled: false

@@ -78,14 +78,15 @@ type Config struct {
 
 // StreamerConfig holds configuration for a single streamer.
 type StreamerConfig struct {
-	ScreenID      string `yaml:"screen_id" json:"screen_id"`
-	Schedule      string `yaml:"schedule" json:"schedule"`
-	Disabled      bool   `yaml:"disabled,omitempty" json:"disabled,omitempty"`
-	Nickname      string `yaml:"nickname,omitempty" json:"nickname,omitempty"`
-	Avatar        string `yaml:"avatar,omitempty" json:"avatar,omitempty"`
-	QualityMode   string `yaml:"quality_mode,omitempty" json:"quality_mode,omitempty"`
-	ContainerMode string `yaml:"container_mode,omitempty" json:"container_mode,omitempty"`
-	AuthMode      string `yaml:"auth_mode,omitempty" json:"auth_mode,omitempty"`
+	ScreenID        string `yaml:"screen_id" json:"screen_id"`
+	Schedule        string `yaml:"schedule" json:"schedule"`
+	Disabled        bool   `yaml:"disabled,omitempty" json:"disabled,omitempty"`
+	Nickname        string `yaml:"nickname,omitempty" json:"nickname,omitempty"`
+	Avatar          string `yaml:"avatar,omitempty" json:"avatar,omitempty"`
+	QualityMode     string `yaml:"quality_mode,omitempty" json:"quality_mode,omitempty"`
+	ContainerMode   string `yaml:"container_mode,omitempty" json:"container_mode,omitempty"`
+	AuthMode        string `yaml:"auth_mode,omitempty" json:"auth_mode,omitempty"`
+	TelegramEnabled bool   `yaml:"telegram_enabled,omitempty" json:"telegram_enabled,omitempty"`
 }
 
 func applyDefaults(cfg *Config) {

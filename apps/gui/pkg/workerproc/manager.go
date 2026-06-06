@@ -113,6 +113,7 @@ func (m *Manager) resolveWorkerPath() (string, error) {
 
 	candidates := make([]string, 0, 4)
 	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, exe)
 		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "recorder-worker.exe"))
 	}
 	if cwd, err := os.Getwd(); err == nil {
@@ -128,7 +129,7 @@ func (m *Manager) resolveWorkerPath() (string, error) {
 			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("recorder-worker.exe not found")
+	return "", fmt.Errorf("embedded worker or recorder-worker.exe not found")
 }
 
 func (h *Handle) Stop(timeout time.Duration) error {

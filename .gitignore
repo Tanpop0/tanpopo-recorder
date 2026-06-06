@@ -19,7 +19,6 @@ GOCACHE/
 
 # Wails build output
 **/build/bin/
-apps/gui/build/
 apps/gui/frontend/dist/
 
 # Local runtime data
@@ -29,6 +28,7 @@ apps/gui/cookies.txt
 apps/cli/config.yaml
 **/config.yaml.bak
 **/cookies.txt
+/????????-????-????-????-????????????.txt
 download/
 logs/
 **/logs/
@@ -37,6 +37,7 @@ apps/cli/download/
 **/recordings/
 **/recordings_legacy/
 *.log
+*_Hook_Log.txt
 .env
 .env.*
 !.env.example

@@ -70,7 +70,6 @@
                   <div class="streamer-message">{{ renderRealtimeMessage(streamer) }}</div>
                   <div class="streamer-meta">
                     <span>更新 {{ formatShortTime(streamer.lastCheckAt) }}</span>
-                    <span>下次 {{ formatShortTime(streamer.nextCheckAt) }}</span>
                     <span v-if="streamer.consecutiveFailures > 0" class="danger-meta">异常 {{ streamer.consecutiveFailures }} 次</span>
                     <span v-else-if="streamer.lastSuccessAt">成功 {{ formatShortTime(streamer.lastSuccessAt) }}</span>
                   </div>
@@ -123,6 +122,17 @@
                   >
                     <el-option v-for="item in authModeOptions" :key="item.value" :label="item.label" :value="item.value" />
                   </el-select>
+                </div>
+                <div class="policy-control">
+                  <span>TG 推送</span>
+                  <el-switch
+                    :model-value="!!selectedStreamer.telegram_enabled"
+                    size="small"
+                    inline-prompt
+                    active-text="开"
+                    inactive-text="关"
+                    @change="value => updateStreamerTelegramEnabled(selectedStreamer, value)"
+                  />
                 </div>
               </div>
 
@@ -354,24 +364,8 @@ const formatRunElapsed = (sinceTs) => {
   return `${h}:${m}:${s}`
 }
 
-const hmsToSeconds = (value) => {
-  const m = String(value || '').match(/^(\d{2}):(\d{2}):(\d{2})$/)
-  if (!m) return null
-  return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])
-}
-
-const MEDIA_ELAPSED_DIFF_THRESHOLD_SECONDS = 10
-
-const mediaElapsedDiffExceedsThreshold = (row) => {
-  if (!row?.mediaElapsed || !row?.recordingSince) return false
-  const runSeconds = hmsToSeconds(formatRunElapsed(row.recordingSince))
-  const mediaSeconds = hmsToSeconds(row.mediaElapsed)
-  if (runSeconds == null || mediaSeconds == null) return true
-  return Math.abs(runSeconds - mediaSeconds) > MEDIA_ELAPSED_DIFF_THRESHOLD_SECONDS
-}
-
 const shouldShowMediaElapsed = (row) => {
-  return !!row?.mediaElapsedVisible || mediaElapsedDiffExceedsThreshold(row)
+  return !!row?.mediaElapsed
 }
 
 const formatShortTime = (value) => {
@@ -510,6 +504,7 @@ const customRecordingPolicyText = (row) => {
   const container = getContainerModeText(row?.container_mode)
   if (quality) parts.push(quality)
   if (container) parts.push(container)
+  if (row?.telegram_enabled) parts.push('TG 推送')
   return parts.join(' / ')
 }
 
@@ -571,7 +566,7 @@ const renderRealtimeMessage = (row) => {
     const timeText = shouldShowMediaElapsed(row)
       ? `录制时长 ${runElapsed} | 媒体时长 ${elapsed}`
       : `录制时长 ${runElapsed}`
-    return `标题: ${title} | ${timeText} | ${msg}`
+    return `标题: ${title} | ${timeText}`
   }
   return msg
 }
@@ -620,7 +615,6 @@ const refreshList = async () => {
         current_status: s.current_status,
         last_message: s.last_message,
         mediaElapsed: s.mediaElapsed,
-        mediaElapsedVisible: s.mediaElapsedVisible,
         currentTitle: s.currentTitle,
         recordingSince: s.recordingSince,
         lastError: s.lastError,
@@ -639,7 +633,6 @@ const refreshList = async () => {
       let status = s.is_monitoring ? 'monitoring' : 'idle'
       let message = s.is_monitoring ? '监听中，等待开播...' : '已暂停监听'
       let mediaElapsed = null
-      let mediaElapsedVisible = false
       let currentTitle = null
       let recordingSince = null
       let lastError = s.last_error || ''
@@ -658,7 +651,6 @@ const refreshList = async () => {
           status = old.current_status
           message = old.last_message
           mediaElapsed = old.mediaElapsed
-          mediaElapsedVisible = old.mediaElapsedVisible || false
           currentTitle = old.currentTitle
           recordingSince = old.recordingSince
         }
@@ -678,7 +670,6 @@ const refreshList = async () => {
         current_status: status,
         last_message: message,
         mediaElapsed,
-        mediaElapsedVisible,
         currentTitle,
         recordingSince,
         lastError,
@@ -818,7 +809,7 @@ const updateStreamerAuthMode = async (row, authMode) => {
   const previous = row.auth_mode || ''
   row.auth_mode = authMode || ''
   try {
-    const err = await UpdateStreamerOptions(row.screen_id, row.quality_mode || '', row.container_mode || '', row.auth_mode || '')
+    const err = await UpdateStreamerOptions(row.screen_id, row.quality_mode || '', row.container_mode || '', row.auth_mode || '', !!row.telegram_enabled)
     if (err) {
       row.auth_mode = previous
       ElMessage.error(`更新策略失败: ${err}`)
@@ -828,6 +819,24 @@ const updateStreamerAuthMode = async (row, authMode) => {
   } catch (e) {
     row.auth_mode = previous
     ElMessage.error(`更新策略失败: ${e?.message || e}`)
+  }
+}
+
+const updateStreamerTelegramEnabled = async (row, enabled) => {
+  if (!row?.screen_id) return
+  const previous = !!row.telegram_enabled
+  row.telegram_enabled = !!enabled
+  try {
+    const err = await UpdateStreamerOptions(row.screen_id, row.quality_mode || '', row.container_mode || '', row.auth_mode || '', !!row.telegram_enabled)
+    if (err) {
+      row.telegram_enabled = previous
+      ElMessage.error(`更新 TG 推送失败: ${err}`)
+      return
+    }
+    appendOpLog(`${row.screen_id} TG 推送: ${row.telegram_enabled ? '开启' : '关闭'}`)
+  } catch (e) {
+    row.telegram_enabled = previous
+    ElMessage.error(`更新 TG 推送失败: ${e?.message || e}`)
   }
 }
 
@@ -872,16 +881,12 @@ onMounted(() => {
     row.nextCheckAt = data.status === 'idle' ? null : estimateNextCheckAt(row, row.lastCheckAt)
     if (previousStatus !== 'recording' && data.status === 'recording') {
       row.recordingSince = Date.now()
-      row.mediaElapsedVisible = false
     }
     let displayMessage = data.message || ''
 
     const elapsed = extractMediaElapsed(displayMessage)
     if (elapsed) {
       row.mediaElapsed = elapsed
-      if (mediaElapsedDiffExceedsThreshold(row)) {
-        row.mediaElapsedVisible = true
-      }
     }
 
     if (displayMessage.startsWith('Live! ')) {
@@ -920,7 +925,6 @@ onMounted(() => {
 
     if (data.status !== 'recording') {
       row.mediaElapsed = null
-      row.mediaElapsedVisible = false
       row.recordingSince = null
       if (data.status === 'monitoring' || data.status === 'idle') {
         row.currentTitle = null

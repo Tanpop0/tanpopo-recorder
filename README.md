@@ -2,11 +2,20 @@
 
 TwitCasting Recorder is a desktop and server-friendly recorder for TwitCasting
 live streams. It provides a Wails/Vue GUI for daily desktop use, plus a CLI,
-worker process, and lightweight Web panel for long-running monitoring.
+worker mode, and lightweight Web panel for long-running monitoring.
 
 The project is designed around one recording unit per streamer, with official
 OAuth API checks preferred, optional cookie support, FFmpeg recording, recording
 history, short-file marking, and optional comment capture.
+
+## Download
+
+Windows users can download the current portable GUI package:
+
+- [TanpopoRecorder-windows-latest.zip](release/TanpopoRecorder-windows-latest.zip)
+
+FFmpeg and FFprobe are not bundled. Install them separately or configure their
+paths in the application settings.
 
 ## Features
 
@@ -18,7 +27,8 @@ history, short-file marking, and optional comment capture.
 - Optional `cookies.txt` support for streams that require an authenticated web
   session.
 - FFmpeg-based recording with MKV/TS/MP4 modes.
-- Worker process isolation for one-streamer-per-process monitoring.
+- Isolated one-streamer worker processes, launched through the GUI executable or
+  as a standalone worker for CLI/server use.
 - Sidecar metadata and comment files next to recordings, with a configurable
   comment text template.
 - Optional Telegram notifications for recording start, finish, and failure.
@@ -52,6 +62,12 @@ Build:
 
 ```powershell
 .\scripts\build-gui.ps1
+```
+
+The Windows GUI build is written to:
+
+```text
+apps/gui/build/bin/twitcasting-recorder-gui.exe
 ```
 
 ### CLI
@@ -131,9 +147,8 @@ commit OAuth tokens, cookies, private configs, or recorded media.
 - [Authentication](docs/03-鉴权与会员内容.md)
 - [Data Directories](docs/09-数据目录与发布结构.md)
 - [Web Panel Security](docs/10-Web面板安全说明.md)
-- [Open Source Checklist](docs/11-GitHub开源发布清单.md)
+- [CDP HLS Diagnostics](docs/12-CDP浏览器HLS捕获诊断.md)
 
 ## License
 
-No license has been selected yet. Before publishing as an open-source repository,
-choose and add a license file, such as MIT, Apache-2.0, or GPL-3.0.
+This project is licensed under the [MIT License](LICENSE).

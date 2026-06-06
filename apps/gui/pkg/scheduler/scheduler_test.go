@@ -33,8 +33,26 @@ func TestClassifyRecordingStatusFailedAuthPlaceholder(t *testing.T) {
 
 func TestClassifyRecordingStatusInterrupted(t *testing.T) {
 	got := classifyRecordingStatus("00:00:01", 1, true, nil, RecordingConfig{MinDurationSeconds: 10})
-	if got != "interrupted" {
-		t.Fatalf("classifyRecordingStatus() = %q, want interrupted", got)
+	if got != "manual_stopped" {
+		t.Fatalf("classifyRecordingStatus() = %q, want manual_stopped", got)
+	}
+}
+
+func TestTelegramEnabledForStreamerDefaultsFalse(t *testing.T) {
+	manager := NewManager(nil, nil)
+	manager.streamerSettings.Store("silent_user", config.StreamerConfig{ScreenID: "silent_user"})
+
+	if manager.telegramEnabledForStreamer("silent_user") {
+		t.Fatalf("telegramEnabledForStreamer() = true, want false")
+	}
+}
+
+func TestTelegramEnabledForStreamerCanBeEnabled(t *testing.T) {
+	manager := NewManager(nil, nil)
+	manager.streamerSettings.Store("push_user", config.StreamerConfig{ScreenID: "push_user", TelegramEnabled: true})
+
+	if !manager.telegramEnabledForStreamer("push_user") {
+		t.Fatalf("telegramEnabledForStreamer() = false, want true")
 	}
 }
 

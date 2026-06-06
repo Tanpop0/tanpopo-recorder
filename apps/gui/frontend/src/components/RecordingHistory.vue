@@ -149,6 +149,9 @@ const formatDate = (dateStr) => {
 
 const recordHealth = (record) => {
   const status = String(record.status || 'completed').toLowerCase()
+  if (status === 'manual_stopped') {
+    return { level: 'warning', text: '手动停止' }
+  }
   if (['short', 'too_short', 'small', 'too_small', 'failed_short', 'interrupted'].includes(status)) {
     return { level: 'warning', text: status === 'interrupted' ? '中断' : '偏短' }
   }

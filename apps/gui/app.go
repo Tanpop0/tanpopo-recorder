@@ -11,6 +11,7 @@ import (
 	stdruntime "runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/user/twitcasting-recorder/apps/gui/pkg/auth"
@@ -31,7 +32,8 @@ type App struct {
 	config         *config.Config
 	scheduler      *scheduler.ValidationManager
 	historyManager *history.HistoryManager
-	isQuitting     bool
+	isQuitting     atomic.Bool
+	shutdownOnce   sync.Once
 	mu             sync.RWMutex
 	diagMu         sync.RWMutex
 	diagnostics    map[string]*StreamerDiagnostics
@@ -67,7 +69,7 @@ type HealthCheckReport struct {
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	return &App{isQuitting: false, diagnostics: make(map[string]*StreamerDiagnostics)}
+	return &App{diagnostics: make(map[string]*StreamerDiagnostics)}
 }
 
 // startup is called when the app starts.
@@ -110,10 +112,10 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) beforeClose(ctx context.Context) (prevent bool) {
-	if a.isQuitting {
+	if a.isQuitting.Load() {
 		return false
 	}
-	a.NotifyAppLog("窗口已隐藏到后台；可从系统托盘恢复或退出程序")
+	a.NotifyAppLog("窗口已隐藏到后台；录制和监听继续运行")
 	a.HideWindow()
 	return true
 }
@@ -141,10 +143,20 @@ func (a *App) HideWindow() {
 }
 
 func (a *App) Quit() {
-	a.isQuitting = true
+	a.isQuitting.Store(true)
 	if a.ctx != nil {
 		runtime.Quit(a.ctx)
 	}
+	go func() {
+		time.Sleep(12 * time.Second)
+		a.ForceQuit()
+	}()
+}
+
+func (a *App) ForceQuit() {
+	a.isQuitting.Store(true)
+	a.stopBackground()
+	os.Exit(0)
 }
 
 func (a *App) AddRecordingHistory(streamerID, filePath, duration string, fileSize int64) {
@@ -518,7 +530,7 @@ func (a *App) RunHealthCheck() HealthCheckReport {
 	}
 
 	if cfg == nil {
-		add("閰嶇疆", "error", "閰嶇疆灏氭湭鍔犺浇")
+		add("配置", "error", "配置尚未加载")
 		return report
 	}
 
@@ -542,14 +554,14 @@ func (a *App) RunHealthCheck() HealthCheckReport {
 		outputDir = "."
 	}
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		add("杈撳嚭鐩綍", "error", err.Error())
+		add("输出目录", "error", err.Error())
 	} else {
 		testPath := filepath.Join(outputDir, ".twitcasting-write-test")
 		if err := os.WriteFile(testPath, []byte("ok"), 0644); err != nil {
-			add("杈撳嚭鐩綍", "error", "涓嶅彲鍐? "+err.Error())
+			add("输出目录", "error", "不可写: "+err.Error())
 		} else {
 			_ = os.Remove(testPath)
-			add("杈撳嚭鐩綍", "ok", outputDir)
+			add("输出目录", "ok", outputDir)
 		}
 	}
 
@@ -560,17 +572,17 @@ func (a *App) RunHealthCheck() HealthCheckReport {
 			add("Worker", "ok", path)
 		}
 	} else {
-		add("Worker", "warn", "鏈惎鐢?worker 杩涚▼闅旂")
+		add("Worker", "warn", "未启用 worker 进程隔离")
 	}
 
 	if cfg.Cookies.Enabled {
 		if _, err := os.Stat(cfg.Cookies.FilePath); err != nil {
-			add("Cookie", "warn", "宸插惎鐢ㄤ絾鏂囦欢涓嶅彲璇? "+err.Error())
+			add("Cookie", "warn", "已启用但文件不可读: "+err.Error())
 		} else {
 			add("Cookie", "ok", cfg.Cookies.FilePath)
 		}
 	} else {
-		add("Cookie", "warn", "鏈惎鐢?cookies.txt锛屼細鍛樻垨鍙楅檺鐩存挱鍙兘澶辫触")
+		add("Cookie", "warn", "未启用 cookies.txt，会员或受限直播可能失败")
 	}
 
 	if strings.TrimSpace(cfg.OAuth.AccessToken) != "" {
@@ -582,11 +594,11 @@ func (a *App) RunHealthCheck() HealthCheckReport {
 	if cfg.Proxy.Enabled {
 		u, err := url.Parse(cfg.Proxy.URL)
 		if err != nil {
-			add("浠ｇ悊", "error", "浠ｇ悊鍦板潃鏍煎紡涓嶆纭? "+err.Error())
+			add("代理", "error", "代理地址格式不正确: "+err.Error())
 		} else if u.Scheme == "" || u.Host == "" {
-			add("浠ｇ悊", "error", "浠ｇ悊鍦板潃闇€瑕佸寘鍚崗璁拰涓绘満锛屼緥濡?http://127.0.0.1:7890")
+			add("代理", "error", "代理地址需要包含协议和主机，例如 http://127.0.0.1:7890")
 		} else {
-			add("浠ｇ悊", "ok", cfg.Proxy.URL)
+			add("代理", "ok", cfg.Proxy.URL)
 		}
 	} else {
 		add("Proxy", "ok", "Proxy disabled")
@@ -606,6 +618,7 @@ func findWorkerExecutable(configuredPath string) (string, error) {
 
 	candidates := make([]string, 0, 4)
 	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, exe)
 		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "recorder-worker.exe"))
 	}
 	if cwd, err := os.Getwd(); err == nil {
@@ -620,28 +633,35 @@ func findWorkerExecutable(configuredPath string) (string, error) {
 			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("recorder-worker.exe not found")
+	return "", fmt.Errorf("embedded worker or recorder-worker.exe not found")
 }
 
 func (a *App) shutdown(ctx context.Context) {
-	if a.scheduler != nil {
-		a.scheduler.Stop()
-	}
+	a.stopBackground()
+}
+
+func (a *App) stopBackground() {
+	a.shutdownOnce.Do(func() {
+		if a.scheduler != nil {
+			a.scheduler.Stop()
+		}
+	})
 }
 
 // StreamerStatus represents the current state of a streamer for the GUI.
 type StreamerStatus struct {
-	ScreenID      string   `json:"screen_id"`
-	Schedule      string   `json:"schedule"`
-	IsMonitoring  bool     `json:"is_monitoring"`
-	Nickname      string   `json:"nickname"`
-	Avatar        string   `json:"avatar"`
-	QualityMode   string   `json:"quality_mode"`
-	ContainerMode string   `json:"container_mode"`
-	AuthMode      string   `json:"auth_mode"`
-	LastError     string   `json:"last_error"`
-	LastFilePath  string   `json:"last_file_path"`
-	RecentLogs    []string `json:"recent_logs"`
+	ScreenID        string   `json:"screen_id"`
+	Schedule        string   `json:"schedule"`
+	IsMonitoring    bool     `json:"is_monitoring"`
+	Nickname        string   `json:"nickname"`
+	Avatar          string   `json:"avatar"`
+	QualityMode     string   `json:"quality_mode"`
+	ContainerMode   string   `json:"container_mode"`
+	AuthMode        string   `json:"auth_mode"`
+	TelegramEnabled bool     `json:"telegram_enabled"`
+	LastError       string   `json:"last_error"`
+	LastFilePath    string   `json:"last_file_path"`
+	RecentLogs      []string `json:"recent_logs"`
 }
 
 func (a *App) GetStreamers() []StreamerStatus {
@@ -662,17 +682,18 @@ func (a *App) GetStreamers() []StreamerStatus {
 
 		diag := a.GetStreamerDiagnostics(s.ScreenID)
 		result = append(result, StreamerStatus{
-			ScreenID:      s.ScreenID,
-			Schedule:      s.Schedule,
-			IsMonitoring:  isMonitoring,
-			Nickname:      s.Nickname,
-			Avatar:        s.Avatar,
-			QualityMode:   s.QualityMode,
-			ContainerMode: s.ContainerMode,
-			AuthMode:      s.AuthMode,
-			LastError:     diag.LastError,
-			LastFilePath:  diag.LastFilePath,
-			RecentLogs:    diag.RecentLogs,
+			ScreenID:        s.ScreenID,
+			Schedule:        s.Schedule,
+			IsMonitoring:    isMonitoring,
+			Nickname:        s.Nickname,
+			Avatar:          s.Avatar,
+			QualityMode:     s.QualityMode,
+			ContainerMode:   s.ContainerMode,
+			AuthMode:        s.AuthMode,
+			TelegramEnabled: s.TelegramEnabled,
+			LastError:       diag.LastError,
+			LastFilePath:    diag.LastFilePath,
+			RecentLogs:      diag.RecentLogs,
 		})
 	}
 	return result
@@ -749,7 +770,7 @@ func (a *App) AddStreamer(screenID string, schedule string, qualityMode string, 
 	return ""
 }
 
-func (a *App) UpdateStreamerOptions(screenID string, qualityMode string, containerMode string, authMode string) string {
+func (a *App) UpdateStreamerOptions(screenID string, qualityMode string, containerMode string, authMode string, telegramEnabled bool) string {
 	screenID = normalizeID(screenID)
 	if screenID == "" {
 		return "screen_id is empty"
@@ -770,6 +791,7 @@ func (a *App) UpdateStreamerOptions(screenID string, qualityMode string, contain
 		a.config.Streamers[i].QualityMode = strings.ToLower(strings.TrimSpace(qualityMode))
 		a.config.Streamers[i].ContainerMode = strings.ToLower(strings.TrimSpace(containerMode))
 		a.config.Streamers[i].AuthMode = strings.ToLower(strings.TrimSpace(authMode))
+		a.config.Streamers[i].TelegramEnabled = telegramEnabled
 
 		if err := config.SaveConfig("config.yaml", a.config); err != nil {
 			return fmt.Sprintf("Error saving config: %v", err)

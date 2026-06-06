@@ -208,7 +208,7 @@ func runRecord(args []string) error {
 	}
 
 	rc := recordOptions(cfg, streamer, confirmed.MovieID)
-	sendCLITelegram(cfg, notifier, "start", fmt.Sprintf("TwitCasting 开始录制\n主播: %s\n标题: %s", screenID, confirmed.Title))
+	sendCLITelegram(cfg, streamer, notifier, "start", cliStartMessage(streamer, screenID, confirmed.Title))
 	duration, filePath, fileSize, stoppedByUser, recErr := recorder.RecordLiveStreamWithOptions(
 		screenID,
 		confirmed.Title,
@@ -224,12 +224,12 @@ func runRecord(args []string) error {
 	}
 	if recErr != nil {
 		if !stoppedByUser {
-			sendCLITelegram(cfg, notifier, "error", fmt.Sprintf("TwitCasting 录制失败\n主播: %s\n错误: %v", screenID, recErr))
+			sendCLITelegram(cfg, streamer, notifier, "error", cliErrorMessage(streamer, screenID, confirmed.Title, recErr.Error()))
 		}
 		return recErr
 	}
 	if !stoppedByUser {
-		sendCLITelegram(cfg, notifier, "finish", fmt.Sprintf("TwitCasting 录制完成\n主播: %s\n时长: %s\n文件: %s", screenID, duration, filePath))
+		sendCLITelegram(cfg, streamer, notifier, "finish", cliFinishMessage(streamer, screenID, confirmed.Title, duration, filePath, fileSize))
 	}
 	fmt.Printf("Recording finished: %s (%s, %d bytes)\n", filePath, duration, fileSize)
 	return nil
@@ -427,8 +427,11 @@ func (n *cliNotifier) SnapshotLogs(limit int) []cliLog {
 	return out
 }
 
-func sendCLITelegram(cfg *config.Config, notifier *cliNotifier, kind, message string) {
+func sendCLITelegram(cfg *config.Config, streamer config.StreamerConfig, notifier *cliNotifier, kind, message string) {
 	if cfg == nil {
+		return
+	}
+	if !streamer.TelegramEnabled {
 		return
 	}
 	tg := cfg.Notifications.Telegram
@@ -456,6 +459,66 @@ func sendCLITelegram(cfg *config.Config, notifier *cliNotifier, kind, message st
 	if err := notify.SendTelegram(ctx, tg, proxyURL(cfg), message); err != nil && notifier != nil {
 		notifier.NotifyAppLog(fmt.Sprintf("telegram push failed: %v", err))
 	}
+}
+
+func cliStreamerDisplayName(streamer config.StreamerConfig, fallbackScreenID string) string {
+	nickname := strings.TrimSpace(streamer.Nickname)
+	screenID := strings.TrimSpace(streamer.ScreenID)
+	if screenID == "" {
+		screenID = strings.TrimSpace(fallbackScreenID)
+	}
+	if nickname == "" {
+		return screenID
+	}
+	return fmt.Sprintf("%s / %s", nickname, screenID)
+}
+
+func cliStartMessage(streamer config.StreamerConfig, screenID, title string) string {
+	displayName := cliStreamerDisplayName(streamer, screenID)
+	lines := []string{
+		fmt.Sprintf("%s 开始直播，并已开始录制", displayName),
+		fmt.Sprintf("主播: %s", displayName),
+	}
+	if strings.TrimSpace(title) != "" {
+		lines = append(lines, "标题: "+strings.TrimSpace(title))
+	}
+	lines = append(lines, "时间: "+time.Now().Format("2006-01-02 15:04:05"))
+	return strings.Join(lines, "\n")
+}
+
+func cliFinishMessage(streamer config.StreamerConfig, screenID, title, duration, filePath string, fileSize int64) string {
+	lines := []string{
+		"TwitCasting 录制完成",
+		fmt.Sprintf("主播: %s", cliStreamerDisplayName(streamer, screenID)),
+	}
+	if strings.TrimSpace(title) != "" {
+		lines = append(lines, "标题: "+strings.TrimSpace(title))
+	}
+	if strings.TrimSpace(duration) != "" {
+		lines = append(lines, "时长: "+strings.TrimSpace(duration))
+	}
+	if fileSize > 0 {
+		lines = append(lines, "大小: "+formatBytes(fileSize))
+	}
+	if strings.TrimSpace(filePath) != "" {
+		lines = append(lines, "文件: "+filepath.Base(filePath))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func cliErrorMessage(streamer config.StreamerConfig, screenID, title, errMessage string) string {
+	lines := []string{
+		"TwitCasting 录制失败",
+		fmt.Sprintf("主播: %s", cliStreamerDisplayName(streamer, screenID)),
+	}
+	if strings.TrimSpace(title) != "" {
+		lines = append(lines, "标题: "+strings.TrimSpace(title))
+	}
+	lines = append(lines,
+		"错误: "+strings.TrimSpace(errMessage),
+		"时间: "+time.Now().Format("2006-01-02 15:04:05"),
+	)
+	return strings.Join(lines, "\n")
 }
 
 func normalizeCLIConfig(cfg *config.Config) {
@@ -542,7 +605,7 @@ func findStreamer(cfg *config.Config, screenID string) config.StreamerConfig {
 
 func classifyStatus(duration string, fileSize int64, stoppedByUser bool, recErr error, cfg *config.Config) string {
 	if stoppedByUser {
-		return "interrupted"
+		return "manual_stopped"
 	}
 	if recErr != nil {
 		return "failed"
@@ -567,6 +630,23 @@ func parseDurationSeconds(value string) int {
 	m, _ := strconv.Atoi(parts[1])
 	s, _ := strconv.Atoi(parts[2])
 	return h*3600 + m*60 + s
+}
+
+func formatBytes(bytes int64) string {
+	if bytes <= 0 {
+		return "0 B"
+	}
+	units := []string{"B", "KB", "MB", "GB", "TB"}
+	value := float64(bytes)
+	unit := 0
+	for value >= 1024 && unit < len(units)-1 {
+		value /= 1024
+		unit++
+	}
+	if unit == 0 {
+		return fmt.Sprintf("%d %s", bytes, units[unit])
+	}
+	return fmt.Sprintf("%.2f %s", value, units[unit])
 }
 
 func printTool(name string, ok bool, path string, version string) {

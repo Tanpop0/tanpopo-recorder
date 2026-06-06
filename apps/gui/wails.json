@@ -7,7 +7,7 @@
   "frontend:dev:watcher": "npm.cmd run dev",
   "frontend:dev:serverUrl": "auto",
   "author": {
-    "name": "Sh1gure45",
-    "email": "buxueriyu41@gmail.com"
+    "name": "TwitCasting Recorder contributors",
+    "email": ""
   }
 }

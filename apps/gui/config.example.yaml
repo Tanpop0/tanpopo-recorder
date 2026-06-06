@@ -6,6 +6,7 @@ streamers:
     quality_mode: ''
     container_mode: ''
     auth_mode: ''
+    telegram_enabled: false
 output_directory: ./download
 check_interval_seconds: 30
 auth_mode: auto

@@ -2,9 +2,11 @@ package main
 
 import (
 	"embed"
+	"os"
 	"runtime"
 
 	"github.com/getlantern/systray"
+	"github.com/user/twitcasting-recorder/apps/gui/pkg/workerproc"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -20,15 +22,17 @@ var iconDataWindows []byte
 var iconDataDefault []byte
 
 func main() {
+	if workerproc.IsWorkerCLI(os.Args[1:]) {
+		os.Exit(workerproc.RunWorkerCLI(os.Args[1:]))
+	}
+
 	app := NewApp()
 
-	go func() {
-		systray.Run(func() {
-			onReady(app)
-		}, func() {
-			onExit(app)
-		})
-	}()
+	systray.Register(func() {
+		onReady(app)
+	}, func() {
+		onExit(app)
+	})
 
 	err := wails.Run(&options.App{
 		Title:     "twitcasting-recorder-gui",
@@ -74,7 +78,7 @@ func onReady(app *App) {
 	systray.SetTooltip("TwitCasting Recorder 正在后台运行")
 
 	mShow := systray.AddMenuItem("显示窗口", "恢复主窗口")
-	mHide := systray.AddMenuItem("隐藏到后台", "隐藏主窗口，录制和监听继续运行")
+	mHide := systray.AddMenuItem("隐藏到后台", "隐藏窗口到托盘，录制和监听继续运行")
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("退出程序", "停止程序并退出")
 

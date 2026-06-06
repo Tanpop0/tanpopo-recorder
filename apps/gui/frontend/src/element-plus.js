@@ -11,6 +11,7 @@ import {
   ElInputNumber,
   ElOption,
   ElSelect,
+  ElSwitch,
   ElTabPane,
   ElTable,
   ElTableColumn,
@@ -33,6 +34,7 @@ import 'element-plus/theme-chalk/el-input-number.css'
 import 'element-plus/theme-chalk/el-option.css'
 import 'element-plus/theme-chalk/el-popper.css'
 import 'element-plus/theme-chalk/el-select.css'
+import 'element-plus/theme-chalk/el-switch.css'
 import 'element-plus/theme-chalk/el-tabs.css'
 import 'element-plus/theme-chalk/el-table.css'
 import 'element-plus/theme-chalk/el-tag.css'
@@ -54,6 +56,7 @@ const components = [
   ElInputNumber,
   ElOption,
   ElSelect,
+  ElSwitch,
   ElTabPane,
   ElTable,
   ElTableColumn,

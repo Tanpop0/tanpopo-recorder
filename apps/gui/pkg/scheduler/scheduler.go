@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -305,6 +306,51 @@ func (m *ValidationManager) getNotificationsConfig() config.NotificationsConfig 
 	return m.notifications
 }
 
+func (m *ValidationManager) getStreamerConfig(screenID string) (config.StreamerConfig, bool) {
+	if value, ok := m.streamerSettings.Load(screenID); ok {
+		if streamer, okCast := value.(config.StreamerConfig); okCast {
+			return streamer, true
+		}
+	}
+
+	var found config.StreamerConfig
+	ok := false
+	m.streamerSettings.Range(func(_, value any) bool {
+		streamer, okCast := value.(config.StreamerConfig)
+		if !okCast {
+			return true
+		}
+		if strings.EqualFold(strings.TrimSpace(streamer.ScreenID), strings.TrimSpace(screenID)) {
+			found = streamer
+			ok = true
+			return false
+		}
+		return true
+	})
+	return found, ok
+}
+
+func (m *ValidationManager) telegramEnabledForStreamer(screenID string) bool {
+	streamer, ok := m.getStreamerConfig(screenID)
+	return ok && streamer.TelegramEnabled
+}
+
+func (m *ValidationManager) streamerDisplayName(screenID string) string {
+	streamer, ok := m.getStreamerConfig(screenID)
+	if !ok {
+		return strings.TrimSpace(screenID)
+	}
+	nickname := strings.TrimSpace(streamer.Nickname)
+	id := strings.TrimSpace(streamer.ScreenID)
+	if id == "" {
+		id = strings.TrimSpace(screenID)
+	}
+	if nickname == "" {
+		return id
+	}
+	return fmt.Sprintf("%s / %s", nickname, id)
+}
+
 func (m *ValidationManager) getRecordingConfigForStreamer(screenID string) RecordingConfig {
 	recording := m.getRecordingConfig()
 	if value, ok := m.streamerSettings.Load(screenID); ok {
@@ -469,7 +515,7 @@ func (m *ValidationManager) checkAndRecord(screenID string) {
 			m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Live started, recording: %s", screenID, info.Title))
 		}
 		m.activeRecordings.Store(screenID, true)
-		m.sendRecordingNotification("start", screenID, fmt.Sprintf("TwitCasting 开始录制\n主播: %s\n标题: %s", screenID, info.Title))
+		m.sendRecordingNotification("start", screenID, m.recordingStartMessage(screenID, info.Title))
 
 		streamTitle := info.Title
 		streamURL := info.StreamURL
@@ -524,10 +570,10 @@ func (m *ValidationManager) checkAndRecord(screenID string) {
 					m.notifier.NotifyStatus(sID, "error", fmt.Sprintf("Recording failed: %v", recErr))
 					m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Recording failed: %v", sID, recErr))
 					m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Automatic immediate retry skipped; waiting for next scheduled check", sID))
-					m.sendRecordingNotification("error", sID, fmt.Sprintf("TwitCasting 录制失败\n主播: %s\n错误: %v", sID, recErr))
+					m.sendRecordingNotification("error", sID, m.recordingErrorMessage(sID, sTitle, recErr.Error()))
 				}
 			} else if !stoppedByUser {
-				m.sendRecordingNotification("finish", sID, fmt.Sprintf("TwitCasting 录制完成\n主播: %s\n时长: %s\n文件: %s", sID, duration, filePath))
+				m.sendRecordingNotification("finish", sID, m.recordingFinishMessage(sID, sTitle, duration, filePath, fileSize))
 			}
 		}(screenID, streamTitle, streamURL, outputDir, auth, recordingConfig)
 	} else {
@@ -754,11 +800,7 @@ func (m *ValidationManager) handleWorkerEvent(fallbackScreenID string, evt worke
 			m.activeRecordings.Store(screenID, true)
 			m.workerRestarts.Delete(screenID)
 			if !alreadyRecording {
-				message := fmt.Sprintf("TwitCasting 开始录制\n主播: %s", screenID)
-				if strings.TrimSpace(evt.Message) != "" {
-					message += "\n状态: " + strings.TrimSpace(evt.Message)
-				}
-				m.sendRecordingNotification("start", screenID, message)
+				m.sendRecordingNotification("start", screenID, m.recordingStartMessage(screenID, ""))
 			}
 		} else if evt.Status != "" {
 			m.activeRecordings.Delete(screenID)
@@ -788,16 +830,16 @@ func (m *ValidationManager) handleWorkerEvent(fallbackScreenID string, evt worke
 			m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Recording failed: %v", screenID, evt.Error))
 		}
 		if evt.Error != "" && !evt.StoppedByUser {
-			m.sendRecordingNotification("error", screenID, fmt.Sprintf("TwitCasting 录制失败\n主播: %s\n错误: %s", screenID, evt.Error))
+			m.sendRecordingNotification("error", screenID, m.recordingErrorMessage(screenID, "", evt.Error))
 		} else if evt.Error == "" && !evt.StoppedByUser {
-			m.sendRecordingNotification("finish", screenID, fmt.Sprintf("TwitCasting 录制完成\n主播: %s\n时长: %s\n文件: %s", screenID, evt.Duration, evt.FilePath))
+			m.sendRecordingNotification("finish", screenID, m.recordingFinishMessage(screenID, "", evt.Duration, evt.FilePath, evt.FileSize))
 		}
 	case "error":
 		if m.notifier != nil {
 			m.notifier.NotifyStatus(screenID, "error", evt.Error)
 			m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Worker error: %s", screenID, evt.Error))
 		}
-		m.sendRecordingNotification("error", screenID, fmt.Sprintf("TwitCasting Worker 异常\n主播: %s\n错误: %s", screenID, evt.Error))
+		m.sendRecordingNotification("error", screenID, m.workerErrorMessage(screenID, evt.Error))
 	default:
 		if m.notifier != nil {
 			data := strings.TrimSpace(evt.Message)
@@ -810,6 +852,9 @@ func (m *ValidationManager) handleWorkerEvent(fallbackScreenID string, evt worke
 }
 
 func (m *ValidationManager) sendRecordingNotification(kind, screenID, message string) {
+	if !m.telegramEnabledForStreamer(screenID) {
+		return
+	}
 	notifications := m.getNotificationsConfig()
 	tg := notifications.Telegram
 	if !tg.Enabled {
@@ -841,9 +886,83 @@ func (m *ValidationManager) sendRecordingNotification(kind, screenID, message st
 	}()
 }
 
+func (m *ValidationManager) recordingStartMessage(screenID, title string) string {
+	displayName := m.streamerDisplayName(screenID)
+	lines := []string{
+		fmt.Sprintf("%s 开始直播，并已开始录制", displayName),
+		fmt.Sprintf("主播: %s", displayName),
+	}
+	if strings.TrimSpace(title) != "" {
+		lines = append(lines, fmt.Sprintf("标题: %s", strings.TrimSpace(title)))
+	}
+	lines = append(lines, "时间: "+time.Now().Format("2006-01-02 15:04:05"))
+	return strings.Join(lines, "\n")
+}
+
+func (m *ValidationManager) recordingFinishMessage(screenID, title, duration, filePath string, fileSize int64) string {
+	lines := []string{
+		"TwitCasting 录制完成",
+		fmt.Sprintf("主播: %s", m.streamerDisplayName(screenID)),
+	}
+	if strings.TrimSpace(title) != "" {
+		lines = append(lines, fmt.Sprintf("标题: %s", strings.TrimSpace(title)))
+	}
+	if strings.TrimSpace(duration) != "" {
+		lines = append(lines, "时长: "+strings.TrimSpace(duration))
+	}
+	if fileSize > 0 {
+		lines = append(lines, "大小: "+formatBytes(fileSize))
+	}
+	if strings.TrimSpace(filePath) != "" {
+		lines = append(lines, "文件: "+filepath.Base(filePath))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m *ValidationManager) recordingErrorMessage(screenID, title, errMessage string) string {
+	lines := []string{
+		"TwitCasting 录制失败",
+		fmt.Sprintf("主播: %s", m.streamerDisplayName(screenID)),
+	}
+	if strings.TrimSpace(title) != "" {
+		lines = append(lines, fmt.Sprintf("标题: %s", strings.TrimSpace(title)))
+	}
+	lines = append(lines,
+		"错误: "+strings.TrimSpace(errMessage),
+		"时间: "+time.Now().Format("2006-01-02 15:04:05"),
+	)
+	return strings.Join(lines, "\n")
+}
+
+func (m *ValidationManager) workerErrorMessage(screenID, errMessage string) string {
+	return strings.Join([]string{
+		"TwitCasting Worker 异常",
+		fmt.Sprintf("主播: %s", m.streamerDisplayName(screenID)),
+		"错误: " + strings.TrimSpace(errMessage),
+		"时间: " + time.Now().Format("2006-01-02 15:04:05"),
+	}, "\n")
+}
+
+func formatBytes(bytes int64) string {
+	if bytes <= 0 {
+		return "0 B"
+	}
+	units := []string{"B", "KB", "MB", "GB", "TB"}
+	value := float64(bytes)
+	unit := 0
+	for value >= 1024 && unit < len(units)-1 {
+		value /= 1024
+		unit++
+	}
+	if unit == 0 {
+		return fmt.Sprintf("%d %s", bytes, units[unit])
+	}
+	return fmt.Sprintf("%.2f %s", value, units[unit])
+}
+
 func classifyRecordingStatus(duration string, fileSize int64, stoppedByUser bool, recErr error, rc RecordingConfig) string {
 	if stoppedByUser {
-		return "interrupted"
+		return "manual_stopped"
 	}
 	if recErr != nil {
 		if isShortRecording(duration, fileSize, rc) {

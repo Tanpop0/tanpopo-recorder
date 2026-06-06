@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	stdruntime "runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -87,42 +88,92 @@ var (
 
 var hlsVariantPattern = regexp.MustCompile(`(/hls/)(\d+\.\d+)(/media(?:\.\d+)?\.m3u8)`)
 
-func findFFmpegPath(preferredPath string) string {
-	preferredPath = strings.TrimSpace(preferredPath)
-	if preferredPath != "" {
-		if _, err := os.Stat(preferredPath); err == nil {
-			return preferredPath
+func toolExecutableNames(toolName string) []string {
+	if stdruntime.GOOS == "windows" {
+		return []string{toolName + ".exe", toolName}
+	}
+	return []string{toolName}
+}
+
+func regularFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func absIfPossible(path string) string {
+	if absPath, err := filepath.Abs(path); err == nil {
+		return absPath
+	}
+	return path
+}
+
+func resolveToolInDir(dir string, toolName string) string {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return ""
+	}
+	for _, exeName := range toolExecutableNames(toolName) {
+		for _, candidate := range []string{
+			filepath.Join(dir, exeName),
+			filepath.Join(dir, "bin", exeName),
+		} {
+			if regularFile(candidate) {
+				return absIfPossible(candidate)
+			}
 		}
 	}
-	if path, err := exec.LookPath("ffmpeg"); err == nil {
+	return ""
+}
+
+func resolvePreferredToolPath(preferredPath string, toolName string) string {
+	preferredPath = strings.TrimSpace(preferredPath)
+	if preferredPath == "" {
+		return ""
+	}
+
+	if info, err := os.Stat(preferredPath); err == nil {
+		if info.IsDir() {
+			return resolveToolInDir(preferredPath, toolName)
+		}
+		return preferredPath
+	}
+
+	for _, exeName := range toolExecutableNames(toolName) {
+		for _, candidate := range []string{
+			preferredPath + filepath.Ext(exeName),
+			filepath.Join(preferredPath, exeName),
+			filepath.Join(preferredPath, "bin", exeName),
+		} {
+			if regularFile(candidate) {
+				return absIfPossible(candidate)
+			}
+		}
+	}
+
+	return ""
+}
+
+func findToolPath(preferredPath string, toolName string) string {
+	if resolved := resolvePreferredToolPath(preferredPath, toolName); resolved != "" {
+		return resolved
+	}
+	if path, err := exec.LookPath(toolName); err == nil {
 		return path
 	}
-	if _, err := os.Stat("ffmpeg.exe"); err == nil {
-		if absPath, err := filepath.Abs("ffmpeg.exe"); err == nil {
-			return absPath
+	for _, exeName := range toolExecutableNames(toolName) {
+		if regularFile(exeName) {
+			return absIfPossible(exeName)
 		}
-		return "ffmpeg.exe"
 	}
-	return "ffmpeg"
+	return toolName
+}
+
+func findFFmpegPath(preferredPath string) string {
+	return findToolPath(preferredPath, "ffmpeg")
 }
 
 func findFFprobePath(preferredPath string) string {
-	preferredPath = strings.TrimSpace(preferredPath)
-	if preferredPath != "" {
-		if _, err := os.Stat(preferredPath); err == nil {
-			return preferredPath
-		}
-	}
-	if path, err := exec.LookPath("ffprobe"); err == nil {
-		return path
-	}
-	if _, err := os.Stat("ffprobe.exe"); err == nil {
-		if absPath, err := filepath.Abs("ffprobe.exe"); err == nil {
-			return absPath
-		}
-		return "ffprobe.exe"
-	}
-	return "ffprobe"
+	return findToolPath(preferredPath, "ffprobe")
 }
 
 func CheckToolchain(options RecordOptions) ToolStatus {
@@ -360,12 +411,28 @@ func writeInfoTextFile(filePath, streamerID, title, streamURL, qualityMode, cont
 	_ = os.WriteFile(infoPath, []byte(strings.Join(lines, "\r\n")+"\r\n"), 0644)
 }
 
-func buildCookieHeader(cookieFile string) string {
-	return cookies.BuildHeader(cookieFile)
-}
-
 func buildFFmpegCookieJar(cookieFile string) string {
 	return cookies.BuildFFmpegCookieJar(cookieFile)
+}
+
+func cookieAuthEnabled(auth AuthSettings) bool {
+	mode := strings.ToLower(strings.TrimSpace(auth.Mode))
+	if mode == "" {
+		mode = "auto"
+	}
+	return auth.CookieEnabled && (mode == "cookie" || mode == "auto")
+}
+
+func buildFFmpegHTTPOptions(streamerID string, auth AuthSettings) (string, string) {
+	headers := []string{
+		fmt.Sprintf("Referer: https://twitcasting.tv/%s", streamerID),
+		"Origin: https://twitcasting.tv",
+	}
+	cookieJar := ""
+	if cookieAuthEnabled(auth) {
+		cookieJar = buildFFmpegCookieJar(auth.CookieFile)
+	}
+	return strings.Join(headers, "\r\n") + "\r\n", cookieJar
 }
 
 func redactFFmpegArgs(args []string) string {
@@ -549,30 +616,15 @@ func RecordLiveStreamWithOptions(streamerID, title, streamURL, outputDir string,
 	finalFileName := fmt.Sprintf("%s_%s_%s%s", sanitizedID, sanitizedTitle, timestamp, plan.finalExt)
 	finalOutputPath := filepath.Join(streamerDir, finalFileName)
 
-	headers := []string{
-		fmt.Sprintf("Referer: https://twitcasting.tv/%s", streamerID),
-		"Origin: https://twitcasting.tv",
-	}
-	ffmpegCookieJar := ""
-	mode := strings.ToLower(strings.TrimSpace(auth.Mode))
-	if mode == "" {
-		mode = "auto"
-	}
-	if mode == "cookie" || mode == "auto" {
-		if auth.CookieEnabled {
-			if ck := buildCookieHeader(auth.CookieFile); ck != "" {
-				headers = append(headers, "Cookie: "+ck)
-				ffmpegCookieJar = buildFFmpegCookieJar(auth.CookieFile)
-				if notifier != nil {
-					notifier.NotifyAppLog(fmt.Sprintf("[%s] Cookie auth enabled for recording HTTP requests and HLS subrequests", streamerID))
-				}
-			} else if notifier != nil {
-				notifier.NotifyAppLog(fmt.Sprintf("[%s] Cookie auth requested but no usable cookies were found at %s", streamerID, auth.CookieFile))
-			}
+	headerArg, ffmpegCookieJar := buildFFmpegHTTPOptions(streamerID, auth)
+	if cookieAuthEnabled(auth) && notifier != nil {
+		if ffmpegCookieJar != "" {
+			notifier.NotifyAppLog(fmt.Sprintf("[%s] Cookie auth enabled through FFmpeg cookie jar for HLS requests", streamerID))
+		} else {
+			notifier.NotifyAppLog(fmt.Sprintf("[%s] Cookie auth requested but no usable cookies were found at %s", streamerID, auth.CookieFile))
 		}
 	}
 
-	headerArg := strings.Join(headers, "\r\n") + "\r\n"
 	ffmpegArgs := []string{
 		"-hide_banner",
 		"-loglevel", "info",

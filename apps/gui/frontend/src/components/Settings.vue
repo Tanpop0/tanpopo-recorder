@@ -77,10 +77,10 @@
             <el-input-number v-model="form.recording.startupStaggerSeconds" :min="0" :max="30" />
           </el-form-item>
           <el-form-item label="FFmpeg 路径">
-            <el-input v-model="form.recording.ffmpegPath" placeholder="留空则自动从 PATH 或程序目录查找 ffmpeg.exe" />
+            <el-input v-model="form.recording.ffmpegPath" placeholder="可填 ffmpeg.exe、bin 目录或 FFmpeg 解压目录；留空则自动查找" />
           </el-form-item>
           <el-form-item label="FFprobe 路径">
-            <el-input v-model="form.recording.ffprobePath" placeholder="留空则自动从 PATH 或程序目录查找 ffprobe.exe" />
+            <el-input v-model="form.recording.ffprobePath" placeholder="可填 ffprobe.exe、bin 目录或 FFmpeg 解压目录；留空则自动查找" />
           </el-form-item>
           <el-form-item>
             <el-button :loading="toolChecking" @click="checkTools">检测 FFmpeg / FFprobe</el-button>
@@ -107,7 +107,7 @@
             <el-checkbox v-model="form.recording.workerEnabled">启用单主播 worker 进程隔离（实验）</el-checkbox>
           </el-form-item>
           <el-form-item label="Worker 路径">
-            <el-input v-model="form.recording.workerPath" placeholder="留空则自动查找 recorder-worker.exe" />
+            <el-input v-model="form.recording.workerPath" placeholder="留空则使用当前程序内置 worker；也可指定 recorder-worker.exe" />
           </el-form-item>
           <el-form-item label="Worker 等待开播检查间隔 (秒)">
             <el-input-number v-model="form.recording.workerCheckIntervalSeconds" :min="5" :max="300" />
@@ -130,7 +130,7 @@
         <div class="settings-section">
           <h3>Telegram 推送</h3>
           <el-form-item>
-            <el-checkbox v-model="form.notifications.telegram.enabled">启用 Telegram Bot 推送</el-checkbox>
+            <el-checkbox v-model="form.notifications.telegram.enabled">启用 Telegram Bot 配置</el-checkbox>
           </el-form-item>
           <el-form-item label="Bot Token">
             <el-input v-model="form.notifications.telegram.botToken" type="password" show-password placeholder="123456:ABC-DEF..." />
@@ -145,7 +145,7 @@
           </div>
           <div class="notify-actions">
             <el-button :loading="telegramTesting" @click="testTelegram">测试推送</el-button>
-            <span>修改后需要点击底部“保存设置”才会用于录制事件。</span>
+            <span>录制事件只会发送给右侧“TG 推送”已开启的主播。</span>
           </div>
         </div>
 

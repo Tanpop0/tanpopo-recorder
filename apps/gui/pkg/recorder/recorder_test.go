@@ -1,6 +1,11 @@
 package recorder
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestPickStableVariantURLKeepsOriginalMode(t *testing.T) {
 	raw := "https://twitcasting.tv/livehls/streams/1/hls/705.00/media.705.m3u8"
@@ -54,6 +59,61 @@ func TestResolveContainerPlan(t *testing.T) {
 		if got.finalExt != tt.wantFinalExt || got.ffmpegFormat != tt.wantFormat || got.remuxToMP4 != tt.wantRemux {
 			t.Fatalf("resolveContainerPlan(%q) = %+v", tt.mode, got)
 		}
+	}
+}
+
+func TestBuildFFmpegHTTPOptionsUsesCookieJarWithoutCookieHeader(t *testing.T) {
+	cookieFile := filepath.Join(t.TempDir(), "cookies.txt")
+	data := ".twitcasting.tv\tTRUE\t/\tFALSE\t4102444800\ttc_ss\tsecret\n"
+	if err := os.WriteFile(cookieFile, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	headerArg, cookieJar := buildFFmpegHTTPOptions("example", AuthSettings{
+		Mode:          "cookie",
+		CookieEnabled: true,
+		CookieFile:    cookieFile,
+	})
+
+	if strings.Contains(strings.ToLower(headerArg), "cookie:") {
+		t.Fatalf("buildFFmpegHTTPOptions() added an explicit Cookie header: %q", headerArg)
+	}
+	if !strings.Contains(cookieJar, "tc_ss=secret") {
+		t.Fatalf("buildFFmpegHTTPOptions() cookie jar = %q, want tc_ss cookie", cookieJar)
+	}
+}
+
+func TestResolvePreferredToolPathAcceptsBinDirectory(t *testing.T) {
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	ffmpegPath := filepath.Join(binDir, "ffmpeg.exe")
+	if err := os.WriteFile(ffmpegPath, []byte("test"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := resolvePreferredToolPath(binDir, "ffmpeg")
+	if got != ffmpegPath {
+		t.Fatalf("resolvePreferredToolPath() = %q, want %q", got, ffmpegPath)
+	}
+}
+
+func TestResolvePreferredToolPathAcceptsExtractedRootDirectory(t *testing.T) {
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	ffprobePath := filepath.Join(binDir, "ffprobe.exe")
+	if err := os.WriteFile(ffprobePath, []byte("test"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := resolvePreferredToolPath(root, "ffprobe")
+	if got != ffprobePath {
+		t.Fatalf("resolvePreferredToolPath() = %q, want %q", got, ffprobePath)
 	}
 }
 
