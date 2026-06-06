@@ -1,6 +1,6 @@
-# TwitCasting Recorder
+# Tanpopo TwitCasting Recorder
 
-TwitCasting Recorder is a desktop and server-friendly recorder for TwitCasting
+Tanpopo TwitCasting Recorder is a desktop and server-friendly recorder for TwitCasting
 live streams. It provides a Wails/Vue GUI for daily desktop use, plus a CLI,
 worker mode, and lightweight Web panel for long-running monitoring.
 
