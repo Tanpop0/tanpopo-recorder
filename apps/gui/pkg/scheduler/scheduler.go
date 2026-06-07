@@ -74,6 +74,8 @@ type ValidationManager struct {
 	pausedStreamers  sync.Map // map[string]bool - monitoring paused
 	workerHandles    sync.Map // map[string]*workerproc.Handle - isolated monitor workers
 	workerRestarts   sync.Map // map[string]int - consecutive worker restarts
+	restrictedLives  sync.Map // map[string]string - live session suppressed after repeated access failures
+	restrictedChecks sync.Map // map[string]restrictedCheck - pending restricted access confirmation
 	streamerSettings sync.Map // map[string]config.StreamerConfig
 	cronEntries      sync.Map // map[string]cron.EntryID
 	cron             *cron.Cron
@@ -90,6 +92,11 @@ type ValidationManager struct {
 
 	notificationsMu sync.RWMutex
 	notifications   config.NotificationsConfig
+}
+
+type restrictedCheck struct {
+	LiveKey string
+	Count   int
 }
 
 func NewManager(notifier StatusNotifier, cfg *config.Config) *ValidationManager {
@@ -193,6 +200,14 @@ func (m *ValidationManager) SetAuthConfig(auth AuthConfig) {
 	m.authMu.Lock()
 	m.auth = auth
 	m.authMu.Unlock()
+	m.restrictedLives.Range(func(key, _ any) bool {
+		m.restrictedLives.Delete(key)
+		return true
+	})
+	m.restrictedChecks.Range(func(key, _ any) bool {
+		m.restrictedChecks.Delete(key)
+		return true
+	})
 }
 
 func (m *ValidationManager) SetRecordingConfig(recording RecordingConfig) {
@@ -292,6 +307,41 @@ func (m *ValidationManager) getAuthConfigForStreamer(screenID string) AuthConfig
 		}
 	}
 	return auth
+}
+
+func isForcedCookieAuth(auth AuthConfig) bool {
+	return auth.CookieEnabled && strings.EqualFold(strings.TrimSpace(auth.Mode), "cookie")
+}
+
+func (m *ValidationManager) isRestrictedLive(screenID, liveKey string) bool {
+	value, ok := m.restrictedLives.Load(screenID)
+	if !ok {
+		return false
+	}
+	key, ok := value.(string)
+	return ok && key == liveKey
+}
+
+func (m *ValidationManager) clearRestrictedLive(screenID string) bool {
+	_, existed := m.restrictedLives.LoadAndDelete(screenID)
+	m.restrictedChecks.Delete(screenID)
+	return existed
+}
+
+func (m *ValidationManager) recordRestrictedFailure(screenID, liveKey string) int {
+	check := restrictedCheck{LiveKey: liveKey}
+	if value, ok := m.restrictedChecks.Load(screenID); ok {
+		if previous, okCast := value.(restrictedCheck); okCast && previous.LiveKey == liveKey {
+			check = previous
+		}
+	}
+	check.Count++
+	m.restrictedChecks.Store(screenID, check)
+	if check.Count >= 2 {
+		m.restrictedChecks.Delete(screenID)
+		m.restrictedLives.Store(screenID, liveKey)
+	}
+	return check.Count
 }
 
 func (m *ValidationManager) getRecordingConfig() RecordingConfig {
@@ -463,6 +513,8 @@ func (m *ValidationManager) RemoveStreamer(screenID string) error {
 	m.activeRecordings.Delete(screenID)
 	m.pausedStreamers.Delete(screenID)
 	m.workerRestarts.Delete(screenID)
+	m.restrictedLives.Delete(screenID)
+	m.restrictedChecks.Delete(screenID)
 	m.streamerSettings.Delete(screenID)
 	return nil
 }
@@ -508,6 +560,10 @@ func (m *ValidationManager) checkAndRecord(screenID string) {
 			return
 		}
 		info = confirmedInfo
+		liveKey := checker.LiveSessionKey(info)
+		if isForcedCookieAuth(auth) && m.isRestrictedLive(screenID, liveKey) {
+			return
+		}
 
 		fmt.Printf("%s is LIVE! Title: %s. Stream URL resolved. Starting recording...\n", screenID, info.Title)
 		if m.notifier != nil {
@@ -520,7 +576,7 @@ func (m *ValidationManager) checkAndRecord(screenID string) {
 		streamTitle := info.Title
 		streamURL := info.StreamURL
 		outputDir := m.getOutputDirectory()
-		go func(sID, sTitle, sURL, outDir string, ac AuthConfig, rc RecordingConfig) {
+		go func(sID, sTitle, sURL, outDir, sessionKey string, ac AuthConfig, rc RecordingConfig) {
 			recordingFailed := false
 			defer m.activeRecordings.Delete(sID)
 			defer func() {
@@ -565,6 +621,21 @@ func (m *ValidationManager) checkAndRecord(screenID string) {
 
 			if recErr != nil {
 				fmt.Printf("Recording error for %s: %v\n", sID, recErr)
+				if !stoppedByUser && isForcedCookieAuth(ac) && recorder.IsRestrictedAccessError(recErr) {
+					recordingFailed = true
+					attempt := m.recordRestrictedFailure(sID, sessionKey)
+					if m.notifier != nil {
+						if attempt >= 2 {
+							m.notifier.NotifyStatus(sID, "restricted", "受限直播：当前账号无观看权限")
+							m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Restricted live detected; current Cookie account has no viewing permission. Further attempts are suppressed until this live ends", sID))
+						} else {
+							m.notifier.NotifyStatus(sID, "monitoring", "受限直播验证失败，等待再次确认...")
+							m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Restricted live access check failed once; waiting for one confirmation retry", sID))
+						}
+					}
+					return
+				}
+				m.restrictedChecks.Delete(sID)
 				if m.notifier != nil && !stoppedByUser && recErr.Error() != "signal: killed" {
 					recordingFailed = true
 					m.notifier.NotifyStatus(sID, "error", fmt.Sprintf("Recording failed: %v", recErr))
@@ -573,10 +644,14 @@ func (m *ValidationManager) checkAndRecord(screenID string) {
 					m.sendRecordingNotification("error", sID, m.recordingErrorMessage(sID, sTitle, recErr.Error()))
 				}
 			} else if !stoppedByUser {
+				m.restrictedChecks.Delete(sID)
 				m.sendRecordingNotification("finish", sID, m.recordingFinishMessage(sID, sTitle, duration, filePath, fileSize))
 			}
-		}(screenID, streamTitle, streamURL, outputDir, auth, recordingConfig)
+		}(screenID, streamTitle, streamURL, outputDir, liveKey, auth, recordingConfig)
 	} else {
+		if m.clearRestrictedLive(screenID) && m.notifier != nil {
+			m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Restricted live ended; monitoring resumed", screenID))
+		}
 		fmt.Printf("%s is offline.\n", screenID)
 		if m.notifier != nil {
 			m.notifier.NotifyStatus(screenID, "monitoring", "Monitoring for live stream...")

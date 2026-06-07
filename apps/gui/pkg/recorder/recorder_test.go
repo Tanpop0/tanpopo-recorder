@@ -1,6 +1,7 @@
 package recorder
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,6 +81,21 @@ func TestBuildFFmpegHTTPOptionsUsesCookieJarWithoutCookieHeader(t *testing.T) {
 	}
 	if !strings.Contains(cookieJar, "tc_ss=secret") {
 		t.Fatalf("buildFFmpegHTTPOptions() cookie jar = %q, want tc_ss cookie", cookieJar)
+	}
+}
+
+func TestIsRestrictedAccessError(t *testing.T) {
+	for _, message := range []string{
+		"Server returned 401 Unauthorized",
+		"Server returned 403 Forbidden",
+		"Server returned 404 Not Found",
+	} {
+		if !IsRestrictedAccessError(fmt.Errorf("%s", message)) {
+			t.Fatalf("IsRestrictedAccessError(%q) = false, want true", message)
+		}
+	}
+	if IsRestrictedAccessError(fmt.Errorf("connection reset by peer")) {
+		t.Fatal("IsRestrictedAccessError(network error) = true, want false")
 	}
 }
 

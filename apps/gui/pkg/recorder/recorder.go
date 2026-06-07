@@ -423,6 +423,20 @@ func cookieAuthEnabled(auth AuthSettings) bool {
 	return auth.CookieEnabled && (mode == "cookie" || mode == "auto")
 }
 
+// IsRestrictedAccessError reports whether a recording failure indicates that
+// the resolved live stream exists but the current account cannot open it.
+func IsRestrictedAccessError(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "401") ||
+		strings.Contains(lower, "403") ||
+		strings.Contains(lower, "404") ||
+		strings.Contains(lower, "unauthorized") ||
+		strings.Contains(lower, "forbidden")
+}
+
 func buildFFmpegHTTPOptions(streamerID string, auth AuthSettings) (string, string) {
 	headers := []string{
 		fmt.Sprintf("Referer: https://twitcasting.tv/%s", streamerID),
@@ -698,6 +712,8 @@ func RecordLiveStreamWithOptions(streamerID, title, streamURL, outputDir string,
 	var lastProcessLogUpdate time.Time
 	var progressMu sync.Mutex
 	var logMu sync.Mutex
+	var restrictedErrMu sync.Mutex
+	lastRestrictedAccessLine := ""
 	lastMediaTime := ""
 	timeRegex := regexp.MustCompile(`time=([0-9:.]+)`)
 	outTimeRegex := regexp.MustCompile(`out_time=([0-9:.]+)`)
@@ -729,6 +745,11 @@ func RecordLiveStreamWithOptions(streamerID, title, streamURL, outputDir string,
 				continue
 			}
 			fmt.Printf("[FFmpeg-%s] %s\n", name, line)
+			if IsRestrictedAccessError(fmt.Errorf("%s", line)) {
+				restrictedErrMu.Lock()
+				lastRestrictedAccessLine = line
+				restrictedErrMu.Unlock()
+			}
 			if notifier != nil && shouldForwardProcessLog(line) {
 				logMu.Lock()
 				shouldNotifyLog := time.Since(lastProcessLogUpdate) >= 500*time.Millisecond
@@ -835,6 +856,15 @@ func RecordLiveStreamWithOptions(streamerID, title, streamURL, outputDir string,
 	}
 
 	stoppedByUser := h.stopRequested.Load()
+	withRestrictedAccessDetail := func(base error) error {
+		restrictedErrMu.Lock()
+		detail := lastRestrictedAccessLine
+		restrictedErrMu.Unlock()
+		if base == nil || strings.TrimSpace(detail) == "" {
+			return base
+		}
+		return fmt.Errorf("%w: %s", base, detail)
+	}
 	writeInfo := func(stopped bool, recErr error) {
 		if options.SaveInfoText {
 			writeInfoTextFile(finalOutputPath, streamerID, title, streamURL, options.QualityMode, plan.mode, durationStr, fileSize, startTime, time.Now(), stopped, recErr)
@@ -854,11 +884,11 @@ func RecordLiveStreamWithOptions(streamerID, title, streamURL, outputDir string,
 			if notifier != nil {
 				notifier.NotifyAppLog(fmt.Sprintf("[%s] Exited non-zero, duration %s", streamerID, durationStr))
 			}
-			recErr := fmt.Errorf("ffmpeg exited non-zero: %w", err)
+			recErr := withRestrictedAccessDetail(fmt.Errorf("ffmpeg exited non-zero: %w", err))
 			writeInfo(false, recErr)
 			return durationStr, finalOutputPath, fileSize, false, recErr
 		}
-		recErr := fmt.Errorf("ffmpeg execution failed: %w", err)
+		recErr := withRestrictedAccessDetail(fmt.Errorf("ffmpeg execution failed: %w", err))
 		writeInfo(false, recErr)
 		return durationStr, finalOutputPath, fileSize, false, recErr
 	}

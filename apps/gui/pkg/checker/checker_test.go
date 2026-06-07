@@ -28,3 +28,15 @@ func TestIsRecordableLiveURLRejectsArchiveAndFallback(t *testing.T) {
 		}
 	}
 }
+
+func TestLiveSessionKey(t *testing.T) {
+	if got := LiveSessionKey(&StreamInfo{MovieID: "123", Created: 456}); got != "movie:123" {
+		t.Fatalf("LiveSessionKey(movie) = %q, want movie:123", got)
+	}
+	if got := LiveSessionKey(&StreamInfo{Created: 456}); got != "created:456" {
+		t.Fatalf("LiveSessionKey(created) = %q, want created:456", got)
+	}
+	if got := LiveSessionKey(&StreamInfo{}); got != "current-live" {
+		t.Fatalf("LiveSessionKey(fallback) = %q, want current-live", got)
+	}
+}

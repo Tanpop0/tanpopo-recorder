@@ -436,7 +436,7 @@ const filterStreamers = computed(() => {
   return list.sort((a, b) => {
     const getScore = (status) => {
       if (status === 'recording') return 3
-      if (status === 'monitoring') return 2
+      if (status === 'monitoring' || status === 'restricted') return 2
       return 1
     }
     const scoreA = getScore(a.current_status)
@@ -454,7 +454,8 @@ const selectedStreamer = computed(() => {
 const statusCounts = computed(() => {
   return streamers.value.reduce((acc, item) => {
     const status = item.current_status || 'idle'
-    acc[status] = (acc[status] || 0) + 1
+    const countStatus = status === 'restricted' ? 'monitoring' : status
+    acc[countStatus] = (acc[countStatus] || 0) + 1
     return acc
   }, { recording: 0, monitoring: 0, error: 0, idle: 0 })
 })
@@ -467,6 +468,7 @@ const getStatusText = (status) => {
   switch (status) {
     case 'recording': return '录制中'
     case 'monitoring': return '监听中'
+    case 'restricted': return '受限直播'
     case 'error': return '异常'
     default: return '空闲'
   }
@@ -647,7 +649,7 @@ const refreshList = async () => {
 
       if (stateMap.has(s.screen_id)) {
         const old = stateMap.get(s.screen_id)
-        if (s.is_monitoring && (old.current_status === 'recording' || old.current_status === 'error')) {
+        if (s.is_monitoring && ['recording', 'error', 'restricted'].includes(old.current_status)) {
           status = old.current_status
           message = old.last_message
           mediaElapsed = old.mediaElapsed
@@ -917,6 +919,8 @@ onMounted(() => {
       displayMessage = `错误: ${displayMessage}`
       row.consecutiveFailures = (row.consecutiveFailures || 0) + 1
       row.lastError = displayMessage
+    } else if (data.status === 'restricted') {
+      row.consecutiveFailures = 0
     } else if (displayMessage.length > 120) {
       displayMessage = displayMessage.substring(0, 117) + '...'
     }
@@ -1317,6 +1321,15 @@ onUnmounted(() => {
 
 .status-pill.error .status-dot {
   background: #f59e0b;
+}
+
+.status-pill.restricted {
+  color: #7c3aed;
+  background: #f5f3ff;
+}
+
+.status-pill.restricted .status-dot {
+  background: #8b5cf6;
 }
 
 .detail-panel {

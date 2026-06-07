@@ -27,6 +27,21 @@ type StreamInfo struct {
 	Created    int64
 }
 
+// LiveSessionKey identifies one live session well enough to suppress repeated
+// attempts until that session ends.
+func LiveSessionKey(info *StreamInfo) string {
+	if info == nil {
+		return ""
+	}
+	if movieID := strings.TrimSpace(info.MovieID); movieID != "" {
+		return "movie:" + movieID
+	}
+	if info.Created > 0 {
+		return fmt.Sprintf("created:%d", info.Created)
+	}
+	return "current-live"
+}
+
 type currentLiveResp struct {
 	Movie struct {
 		ID          any    `json:"id"`

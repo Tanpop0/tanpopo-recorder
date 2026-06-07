@@ -190,6 +190,9 @@ func runMonitorJob(job *Job, notifier *stdoutNotifier, stopCh <-chan struct{}) E
 	if interval < 5*time.Second {
 		interval = 5 * time.Second
 	}
+	restrictedLiveKey := ""
+	restrictedFailureKey := ""
+	restrictedFailureCount := 0
 
 	for {
 		select {
@@ -214,10 +217,29 @@ func runMonitorJob(job *Job, notifier *stdoutNotifier, stopCh <-chan struct{}) E
 		}
 
 		if info == nil || !info.IsLive {
+			if restrictedLiveKey != "" {
+				restrictedLiveKey = ""
+				restrictedFailureKey = ""
+				restrictedFailureCount = 0
+				notifier.NotifyStatus(job.ScreenID, "monitoring", "受限直播已结束，继续监听")
+				notifier.NotifyAppLog(fmt.Sprintf("[%s] Restricted live ended; monitoring resumed", job.ScreenID))
+			}
 			if waitOrStop(interval, stopCh) {
 				return Event{Type: "result", ScreenID: job.ScreenID, StoppedByUser: true}
 			}
 			continue
+		}
+		liveKey := checker.LiveSessionKey(info)
+		if restrictedLiveKey != "" {
+			if liveKey == restrictedLiveKey {
+				if waitOrStop(interval, stopCh) {
+					return Event{Type: "result", ScreenID: job.ScreenID, StoppedByUser: true}
+				}
+				continue
+			}
+			restrictedLiveKey = ""
+			restrictedFailureKey = ""
+			restrictedFailureCount = 0
 		}
 		if job.Auth.CookieEnabled && (job.Auth.Mode == "auto" || job.Auth.Mode == "cookie") {
 			notifier.NotifyAppLog(fmt.Sprintf("[%s] Cookie auth used for live URL resolution", job.ScreenID))
@@ -267,6 +289,33 @@ func runMonitorJob(job *Job, notifier *stdoutNotifier, stopCh <-chan struct{}) E
 		recordJob.MovieID = confirmedInfo.MovieID
 		recordJob.StreamURL = confirmedInfo.StreamURL
 		result := runRecordJob(&recordJob, notifier)
+		confirmedLiveKey := checker.LiveSessionKey(confirmedInfo)
+		if isForcedCookie(job.Auth) && recorder.IsRestrictedAccessError(errorFromString(result.Error)) {
+			if restrictedFailureKey != confirmedLiveKey {
+				restrictedFailureKey = confirmedLiveKey
+				restrictedFailureCount = 0
+			}
+			restrictedFailureCount++
+			if restrictedFailureCount >= 2 {
+				restrictedLiveKey = confirmedLiveKey
+				restrictedFailureKey = ""
+				restrictedFailureCount = 0
+				notifier.NotifyStatus(job.ScreenID, "restricted", "受限直播：当前账号无观看权限")
+				notifier.NotifyAppLog(fmt.Sprintf("[%s] Restricted live detected; current Cookie account has no viewing permission. Further attempts are suppressed until this live ends", job.ScreenID))
+				if waitOrStop(interval, stopCh) {
+					return Event{Type: "result", ScreenID: job.ScreenID, StoppedByUser: true}
+				}
+				continue
+			}
+			notifier.NotifyStatus(job.ScreenID, "monitoring", "受限直播验证失败，正在再次确认...")
+			notifier.NotifyAppLog(fmt.Sprintf("[%s] Restricted live access check failed once; retrying before suppressing this live", job.ScreenID))
+			if waitOrStop(10*time.Second, stopCh) {
+				return Event{Type: "result", ScreenID: job.ScreenID, StoppedByUser: true}
+			}
+			continue
+		}
+		restrictedFailureKey = ""
+		restrictedFailureCount = 0
 		notifier.emit(result)
 		if result.Error != "" && !result.StoppedByUser {
 			notifier.NotifyAppLog(fmt.Sprintf("[%s] Worker recording failed: %s", job.ScreenID, result.Error))
@@ -282,6 +331,17 @@ func runMonitorJob(job *Job, notifier *stdoutNotifier, stopCh <-chan struct{}) E
 
 		notifier.NotifyStatus(job.ScreenID, "monitoring", "Recording finished, worker waiting for next stream")
 	}
+}
+
+func isForcedCookie(auth AuthSettings) bool {
+	return auth.CookieEnabled && strings.EqualFold(strings.TrimSpace(auth.Mode), "cookie")
+}
+
+func errorFromString(message string) error {
+	if strings.TrimSpace(message) == "" {
+		return nil
+	}
+	return fmt.Errorf("%s", message)
 }
 
 func waitOrStop(d time.Duration, stopCh <-chan struct{}) bool {

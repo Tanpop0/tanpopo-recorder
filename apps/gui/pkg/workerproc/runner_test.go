@@ -23,3 +23,12 @@ func TestIsWorkerCLI(t *testing.T) {
 		})
 	}
 }
+
+func TestIsForcedCookie(t *testing.T) {
+	if !isForcedCookie(AuthSettings{Mode: "cookie", CookieEnabled: true}) {
+		t.Fatal("isForcedCookie(cookie enabled) = false, want true")
+	}
+	if isForcedCookie(AuthSettings{Mode: "auto", CookieEnabled: true}) {
+		t.Fatal("isForcedCookie(auto) = true, want false")
+	}
+}

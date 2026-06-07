@@ -77,3 +77,22 @@ func TestGetAuthConfigForStreamerDisablesCookie(t *testing.T) {
 		t.Fatalf("getAuthConfigForStreamer() = %+v, want cookie disabled", got)
 	}
 }
+
+func TestRecordRestrictedFailureSuppressesAfterTwoAttempts(t *testing.T) {
+	manager := NewManager(nil, nil)
+	if got := manager.recordRestrictedFailure("member_user", "movie:1"); got != 1 {
+		t.Fatalf("first recordRestrictedFailure() = %d, want 1", got)
+	}
+	if manager.isRestrictedLive("member_user", "movie:1") {
+		t.Fatal("live suppressed after one failure")
+	}
+	if got := manager.recordRestrictedFailure("member_user", "movie:1"); got != 2 {
+		t.Fatalf("second recordRestrictedFailure() = %d, want 2", got)
+	}
+	if !manager.isRestrictedLive("member_user", "movie:1") {
+		t.Fatal("live not suppressed after two failures")
+	}
+	if manager.isRestrictedLive("member_user", "movie:2") {
+		t.Fatal("new live session was incorrectly suppressed")
+	}
+}
