@@ -269,8 +269,8 @@ import {
   GetOAuthAuthorizeURL,
   ExchangeOAuthCode,
   VerifyOAuthToken,
-  CheckRecordingTools,
-  RunHealthCheck,
+  CheckRecordingToolsWithPaths,
+  RunHealthCheckWithSettings,
   TestTelegramNotification,
 } from '../../wailsjs/go/main/App'
 
@@ -525,7 +525,10 @@ const testTelegram = async () => {
 const checkTools = async () => {
   toolChecking.value = true
   try {
-    const status = await CheckRecordingTools()
+    const status = await CheckRecordingToolsWithPaths(
+      form.recording.ffmpegPath,
+      form.recording.ffprobePath,
+    )
     toolStatus.ffmpeg_ok = !!status.ffmpeg_ok
     toolStatus.ffprobe_ok = !!status.ffprobe_ok
     toolStatus.message = status.message || ''
@@ -549,7 +552,7 @@ const openFFmpegDownload = () => {
 const runHealthCheck = async () => {
   healthChecking.value = true
   try {
-    const report = await RunHealthCheck()
+    const report = await RunHealthCheckWithSettings(buildSettingsPayload())
     healthReport.ok = !!report.ok
     healthReport.items = report.items || []
     const lines = (report.items || []).map(item => `${item.status.toUpperCase()} ${item.name}: ${item.message}`)

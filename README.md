@@ -116,6 +116,11 @@ Local runtime files are intentionally ignored by git:
 See [Data Directories](docs/09-数据目录与发布结构.md) for the intended runtime
 layout.
 
+## Maintenance Notes
+
+- [更新日志](CHANGELOG.md)
+- [未完全解决问题记录](docs/13-未完全解决问题记录.md)
+
 ## Web Panel Security
 
 The Web panel can add/remove streamers, start/pause monitoring, and write changes
@@ -148,6 +153,8 @@ commit OAuth tokens, cookies, private configs, or recorded media.
 - [Data Directories](docs/09-数据目录与发布结构.md)
 - [Web Panel Security](docs/10-Web面板安全说明.md)
 - [CDP HLS Diagnostics](docs/12-CDP浏览器HLS捕获诊断.md)
+- [更新日志](CHANGELOG.md)
+- [未完全解决问题记录](docs/13-未完全解决问题记录.md)
 
 ## License
 

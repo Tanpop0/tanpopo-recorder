@@ -96,3 +96,12 @@ func TestRecordRestrictedFailureSuppressesAfterTwoAttempts(t *testing.T) {
 		t.Fatal("new live session was incorrectly suppressed")
 	}
 }
+
+func TestSetRecordingConfigPreservesZeroStartupStagger(t *testing.T) {
+	manager := NewManager(nil, nil)
+	manager.SetRecordingConfig(RecordingConfig{StartupStaggerSeconds: 0})
+
+	if got := manager.getRecordingConfig().StartupStaggerSeconds; got != 0 {
+		t.Fatalf("StartupStaggerSeconds = %d, want 0", got)
+	}
+}

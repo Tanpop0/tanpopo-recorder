@@ -140,9 +140,6 @@ func applyDefaults(cfg *Config) {
 	if cfg.Recording.StartupStaggerSeconds < 0 {
 		cfg.Recording.StartupStaggerSeconds = 0
 	}
-	if cfg.Recording.StartupStaggerSeconds == 0 {
-		cfg.Recording.StartupStaggerSeconds = 2
-	}
 	if cfg.Recording.StartupStaggerSeconds > 30 {
 		cfg.Recording.StartupStaggerSeconds = 30
 	}

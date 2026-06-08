@@ -33,10 +33,13 @@ type App struct {
 	scheduler      *scheduler.ValidationManager
 	historyManager *history.HistoryManager
 	isQuitting     atomic.Bool
+	bulkOperation  atomic.Uint64
 	shutdownOnce   sync.Once
 	mu             sync.RWMutex
 	diagMu         sync.RWMutex
 	diagnostics    map[string]*StreamerDiagnostics
+	statusMu       sync.RWMutex
+	runtimeStatus  map[string]StreamerRuntimeStatus
 }
 
 type SettingsPayload struct {
@@ -56,6 +59,11 @@ type StreamerDiagnostics struct {
 	RecentLogs   []string `json:"recent_logs"`
 }
 
+type StreamerRuntimeStatus struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
 type HealthCheckItem struct {
 	Name    string `json:"name"`
 	Status  string `json:"status"`
@@ -69,7 +77,10 @@ type HealthCheckReport struct {
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	return &App{diagnostics: make(map[string]*StreamerDiagnostics)}
+	return &App{
+		diagnostics:   make(map[string]*StreamerDiagnostics),
+		runtimeStatus: make(map[string]StreamerRuntimeStatus),
+	}
 }
 
 // startup is called when the app starts.
@@ -95,6 +106,12 @@ func (a *App) startup(ctx context.Context) {
 	a.mu.Lock()
 	a.config = cfg
 	a.mu.Unlock()
+	proxyURL := ""
+	if cfg.Proxy.Enabled {
+		proxyURL = cfg.Proxy.URL
+	}
+	auth.SetProxyURL(proxyURL)
+	metadata.SetProxyURL(proxyURL)
 
 	a.scheduler = scheduler.NewManager(a, cfg)
 	a.historyManager = history.NewHistoryManager("history.json")
@@ -358,6 +375,14 @@ func (a *App) UpdateHistoryRecordStatus(id string, status string) {
 }
 
 func (a *App) NotifyStatus(screenID, status, message string) {
+	screenID = normalizeID(screenID)
+	a.statusMu.Lock()
+	a.runtimeStatus[screenID] = StreamerRuntimeStatus{
+		Status:  strings.TrimSpace(status),
+		Message: strings.TrimSpace(message),
+	}
+	a.statusMu.Unlock()
+
 	runtime.EventsEmit(a.ctx, "streamer-status", map[string]string{
 		"screen_id": screenID,
 		"status":    status,
@@ -516,11 +541,21 @@ func (a *App) CheckRecordingTools() recorder.ToolStatus {
 	return recorder.CheckToolchain(opts)
 }
 
+func (a *App) CheckRecordingToolsWithPaths(ffmpegPath, ffprobePath string) recorder.ToolStatus {
+	return recorder.CheckToolchain(recorder.RecordOptions{
+		FFmpegPath:  strings.TrimSpace(ffmpegPath),
+		FFprobePath: strings.TrimSpace(ffprobePath),
+	})
+}
+
 func (a *App) RunHealthCheck() HealthCheckReport {
 	a.mu.RLock()
 	cfg := a.config
 	a.mu.RUnlock()
+	return a.runHealthCheckForConfig(cfg)
+}
 
+func (a *App) runHealthCheckForConfig(cfg *config.Config) HealthCheckReport {
 	report := HealthCheckReport{OK: true, Items: make([]HealthCheckItem, 0, 8)}
 	add := func(name, status, message string) {
 		if status == "error" {
@@ -607,6 +642,26 @@ func (a *App) RunHealthCheck() HealthCheckReport {
 	return report
 }
 
+func (a *App) RunHealthCheckWithSettings(payload SettingsPayload) HealthCheckReport {
+	a.mu.RLock()
+	original := a.config
+	a.mu.RUnlock()
+
+	cfg := &config.Config{
+		OutputDirectory: payload.OutputDirectory,
+		AuthMode:        payload.AuthMode,
+		OAuth:           payload.OAuth,
+		Cookies:         payload.Cookies,
+		Recording:       payload.Recording,
+		Proxy:           payload.Proxy,
+		Notifications:   payload.Notifications,
+	}
+	if original != nil {
+		cfg.Streamers = append([]config.StreamerConfig(nil), original.Streamers...)
+	}
+	return a.runHealthCheckForConfig(cfg)
+}
+
 func findWorkerExecutable(configuredPath string) (string, error) {
 	configuredPath = strings.TrimSpace(configuredPath)
 	if configuredPath != "" {
@@ -662,6 +717,14 @@ type StreamerStatus struct {
 	LastError       string   `json:"last_error"`
 	LastFilePath    string   `json:"last_file_path"`
 	RecentLogs      []string `json:"recent_logs"`
+	CurrentStatus   string   `json:"current_status"`
+	LastMessage     string   `json:"last_message"`
+}
+
+func (a *App) getRuntimeStatus(screenID string) StreamerRuntimeStatus {
+	a.statusMu.RLock()
+	defer a.statusMu.RUnlock()
+	return a.runtimeStatus[normalizeID(screenID)]
 }
 
 func (a *App) GetStreamers() []StreamerStatus {
@@ -681,6 +744,16 @@ func (a *App) GetStreamers() []StreamerStatus {
 		}
 
 		diag := a.GetStreamerDiagnostics(s.ScreenID)
+		runtimeStatus := a.getRuntimeStatus(s.ScreenID)
+		if runtimeStatus.Status == "" {
+			if isMonitoring {
+				runtimeStatus.Status = "monitoring"
+				runtimeStatus.Message = "Monitoring for live stream..."
+			} else {
+				runtimeStatus.Status = "idle"
+				runtimeStatus.Message = "Monitoring paused"
+			}
+		}
 		result = append(result, StreamerStatus{
 			ScreenID:        s.ScreenID,
 			Schedule:        s.Schedule,
@@ -694,6 +767,8 @@ func (a *App) GetStreamers() []StreamerStatus {
 			LastError:       diag.LastError,
 			LastFilePath:    diag.LastFilePath,
 			RecentLogs:      diag.RecentLogs,
+			CurrentStatus:   runtimeStatus.Status,
+			LastMessage:     runtimeStatus.Message,
 		})
 	}
 	return result
@@ -828,6 +903,9 @@ func (a *App) RemoveStreamer(screenID string) string {
 			if err := config.SaveConfig("config.yaml", a.config); err != nil {
 				return fmt.Sprintf("Error saving config: %v", err)
 			}
+			a.statusMu.Lock()
+			delete(a.runtimeStatus, screenID)
+			a.statusMu.Unlock()
 			return ""
 		}
 	}
@@ -858,12 +936,23 @@ func (a *App) SetAllMonitoring(monitoring bool) {
 	copy(streamers, a.config.Streamers)
 	staggerSeconds := a.config.Recording.StartupStaggerSeconds
 	a.mu.RUnlock()
+	targets := streamers[:0]
+	for _, streamer := range streamers {
+		if a.scheduler.IsMonitoring(streamer.ScreenID) != monitoring {
+			targets = append(targets, streamer)
+		}
+	}
+	streamers = targets
+	operation := a.bulkOperation.Add(1)
 
 	if monitoring && staggerSeconds > 0 && len(streamers) > 1 {
 		go func() {
 			for i, s := range streamers {
 				if i > 0 {
 					time.Sleep(time.Duration(staggerSeconds) * time.Second)
+				}
+				if a.bulkOperation.Load() != operation {
+					return
 				}
 				if a.scheduler != nil {
 					a.scheduler.SetMonitoring(s.ScreenID, true)
@@ -994,6 +1083,12 @@ func (a *App) syncSchedulerAuthLocked() {
 		ProxyURL:                   a.config.Proxy.URL,
 	})
 	a.scheduler.SetNotificationsConfig(a.config.Notifications)
+	proxyURL := ""
+	if a.config.Proxy.Enabled {
+		proxyURL = a.config.Proxy.URL
+	}
+	auth.SetProxyURL(proxyURL)
+	metadata.SetProxyURL(proxyURL)
 }
 
 func (a *App) SaveSettings(payload SettingsPayload) string {
@@ -1019,8 +1114,8 @@ func (a *App) SaveSettings(payload SettingsPayload) string {
 	if strings.TrimSpace(payload.Recording.ContainerMode) == "" {
 		payload.Recording.ContainerMode = "mkv"
 	}
-	if payload.Recording.StartupStaggerSeconds <= 0 {
-		payload.Recording.StartupStaggerSeconds = 2
+	if payload.Recording.StartupStaggerSeconds < 0 {
+		payload.Recording.StartupStaggerSeconds = 0
 	}
 	if payload.Recording.WorkerCheckIntervalSeconds <= 0 {
 		payload.Recording.WorkerCheckIntervalSeconds = 30
@@ -1038,6 +1133,12 @@ func (a *App) SaveSettings(payload SettingsPayload) string {
 	if payload.Proxy.URL == "" {
 		payload.Proxy.Enabled = false
 	}
+	reloadWorkers := a.config.OutputDirectory != payload.OutputDirectory ||
+		a.config.AuthMode != strings.ToLower(strings.TrimSpace(payload.AuthMode)) ||
+		a.config.OAuth.AccessToken != payload.OAuth.AccessToken ||
+		a.config.Cookies != payload.Cookies ||
+		a.config.Recording != payload.Recording ||
+		a.config.Proxy != payload.Proxy
 
 	a.config.OutputDirectory = payload.OutputDirectory
 	a.config.AuthMode = strings.ToLower(strings.TrimSpace(payload.AuthMode))
@@ -1051,6 +1152,9 @@ func (a *App) SaveSettings(payload SettingsPayload) string {
 		return fmt.Sprintf("Error saving config: %v", err)
 	}
 	a.syncSchedulerAuthLocked()
+	if reloadWorkers && a.scheduler != nil {
+		a.scheduler.ReloadIdleWorkers()
+	}
 	return ""
 }
 

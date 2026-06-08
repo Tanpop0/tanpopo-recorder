@@ -198,7 +198,7 @@ import Settings from './Settings.vue'
 import OperationLog from './OperationLog.vue'
 import AddStreamerDialog from './AddStreamerDialog.vue'
 import StreamerDetailDialog from './StreamerDetailDialog.vue'
-import { GetStreamers, AddStreamer, RemoveStreamer, SetMonitoring, GetRecordingHistory, UpdateStreamerOptions } from '../../wailsjs/go/main/App'
+import { GetStreamers, AddStreamer, RemoveStreamer, SetMonitoring, SetAllMonitoring, GetRecordingHistory, UpdateStreamerOptions } from '../../wailsjs/go/main/App'
 import { BrowserOpenURL, EventsOn } from '../../wailsjs/runtime'
 import { ElMessage } from 'element-plus'
 
@@ -346,8 +346,6 @@ const markStreamerBusy = (screenID, busy) => {
 
 const isStreamerBusy = (screenID) => busyStreamers.value.has(screenID)
 
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
-
 const extractMediaElapsed = (message) => {
   const text = String(message || '')
   const m = text.match(/(\d{2}:\d{2}:\d{2}(?:\.\d+)?)/)
@@ -395,7 +393,7 @@ const applyHistoryStats = (list) => {
     if (['short', 'too_short', 'small', 'too_small'].includes(status)) {
       current.historyWarnings += 1
     }
-    if (['failed', 'error', 'interrupted'].includes(status)) {
+    if (status.startsWith('failed_') || ['failed', 'error', 'interrupted'].includes(status)) {
       current.historyErrors += 1
     }
     stats.set(id, current)
@@ -632,8 +630,8 @@ const refreshList = async () => {
     })
 
     streamers.value = (list || []).map(s => {
-      let status = s.is_monitoring ? 'monitoring' : 'idle'
-      let message = s.is_monitoring ? '监听中，等待开播...' : '已暂停监听'
+      let status = s.current_status || (s.is_monitoring ? 'monitoring' : 'idle')
+      let message = s.last_message || (s.is_monitoring ? '监听中，等待开播...' : '已暂停监听')
       let mediaElapsed = null
       let currentTitle = null
       let recordingSince = null
@@ -649,9 +647,11 @@ const refreshList = async () => {
 
       if (stateMap.has(s.screen_id)) {
         const old = stateMap.get(s.screen_id)
-        if (s.is_monitoring && ['recording', 'error', 'restricted'].includes(old.current_status)) {
+        if (!s.current_status && s.is_monitoring && ['recording', 'error', 'restricted'].includes(old.current_status)) {
           status = old.current_status
           message = old.last_message
+        }
+        if (status === 'recording' && old.current_status === 'recording') {
           mediaElapsed = old.mediaElapsed
           currentTitle = old.currentTitle
           recordingSince = old.recordingSince
@@ -752,23 +752,24 @@ const runMonitoringQueue = async (shouldMonitor) => {
   appendOpLog(`请求: ${shouldMonitor ? '全部开始' : '全部暂停'} (${targets.length} 个任务)`)
 
   try {
+    bulkState.value = {
+      ...bulkState.value,
+      message: shouldMonitor ? '已交给后端按设置的错峰间隔启动。' : '正在暂停所有任务。',
+    }
+    await SetAllMonitoring(shouldMonitor)
     for (const row of targets) {
-      bulkState.value = {
-        ...bulkState.value,
-        message: `正在处理 ${row.screen_id}`,
-      }
       markStreamerBusy(row.screen_id, true)
-      await SetMonitoring(row.screen_id, shouldMonitor)
-      row.current_status = shouldMonitor ? 'monitoring' : 'idle'
-      row.last_message = shouldMonitor ? '监听中，等待开播...' : '已暂停监听'
-      row.lastCheckAt = Date.now()
-      row.nextCheckAt = shouldMonitor ? estimateNextCheckAt(row, row.lastCheckAt) : null
+      if (!shouldMonitor) {
+        row.current_status = 'idle'
+        row.last_message = '已暂停监听'
+        row.lastCheckAt = Date.now()
+        row.nextCheckAt = null
+      }
       bulkState.value = { ...bulkState.value, done: bulkState.value.done + 1 }
       markStreamerBusy(row.screen_id, false)
-      await sleep(180)
     }
     await refreshList()
-    const doneText = shouldMonitor ? '全部开始队列已完成' : '全部暂停队列已完成'
+    const doneText = shouldMonitor ? '全部开始任务已提交，后端将按错峰间隔执行' : '全部暂停队列已完成'
     appendOpLog(doneText)
     finishBulkStateSoon(doneText)
   } catch (e) {

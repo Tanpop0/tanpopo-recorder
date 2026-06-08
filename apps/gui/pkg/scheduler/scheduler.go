@@ -74,6 +74,7 @@ type ValidationManager struct {
 	pausedStreamers  sync.Map // map[string]bool - monitoring paused
 	workerHandles    sync.Map // map[string]*workerproc.Handle - isolated monitor workers
 	workerRestarts   sync.Map // map[string]int - consecutive worker restarts
+	workerReloads    sync.Map // map[string]bool - config reload pending until recording finishes
 	restrictedLives  sync.Map // map[string]string - live session suppressed after repeated access failures
 	restrictedChecks sync.Map // map[string]restrictedCheck - pending restricted access confirmation
 	streamerSettings sync.Map // map[string]config.StreamerConfig
@@ -198,8 +199,12 @@ func (m *ValidationManager) SetAuthConfig(auth AuthConfig) {
 		auth.CookieFile = "cookies.txt"
 	}
 	m.authMu.Lock()
+	changed := m.auth != auth
 	m.auth = auth
 	m.authMu.Unlock()
+	if !changed {
+		return
+	}
 	m.restrictedLives.Range(func(key, _ any) bool {
 		m.restrictedLives.Delete(key)
 		return true
@@ -217,8 +222,8 @@ func (m *ValidationManager) SetRecordingConfig(recording RecordingConfig) {
 	if strings.TrimSpace(recording.ContainerMode) == "" {
 		recording.ContainerMode = "mkv"
 	}
-	if recording.StartupStaggerSeconds <= 0 {
-		recording.StartupStaggerSeconds = 2
+	if recording.StartupStaggerSeconds < 0 {
+		recording.StartupStaggerSeconds = 0
 	}
 	if recording.WorkerCheckIntervalSeconds <= 0 {
 		recording.WorkerCheckIntervalSeconds = 30
@@ -269,6 +274,71 @@ func (m *ValidationManager) SetNotificationsConfig(notifications config.Notifica
 	m.notificationsMu.Lock()
 	m.notifications = notifications
 	m.notificationsMu.Unlock()
+}
+
+// ReloadIdleWorkers applies updated settings to isolated workers that are not
+// currently recording. Active recordings keep their launch-time settings and
+// pick up the new configuration on the next live.
+func (m *ValidationManager) ReloadIdleWorkers() {
+	workerEnabled := m.getRecordingConfig().WorkerEnabled
+	m.workerHandles.Range(func(key, _ any) bool {
+		screenID, ok := key.(string)
+		if !ok {
+			return true
+		}
+		if _, recording := m.activeRecordings.Load(screenID); recording {
+			m.scheduleWorkerReload(screenID)
+			return true
+		}
+		go func() {
+			m.stopWorkerMonitor(screenID)
+			if workerEnabled && m.IsMonitoring(screenID) {
+				m.startWorkerMonitor(screenID)
+			}
+		}()
+		return true
+	})
+	if workerEnabled {
+		m.streamerSettings.Range(func(key, _ any) bool {
+			screenID, ok := key.(string)
+			if !ok || !m.IsMonitoring(screenID) {
+				return true
+			}
+			if _, recording := m.activeRecordings.Load(screenID); recording {
+				return true
+			}
+			if _, exists := m.workerHandles.Load(screenID); exists {
+				return true
+			}
+			go m.startWorkerMonitor(screenID)
+			return true
+		})
+	}
+}
+
+func (m *ValidationManager) scheduleWorkerReload(screenID string) {
+	if _, loaded := m.workerReloads.LoadOrStore(screenID, true); loaded {
+		return
+	}
+	go func() {
+		defer m.workerReloads.Delete(screenID)
+		for {
+			if _, exists := m.getStreamerConfig(screenID); !exists {
+				return
+			}
+			if !m.IsMonitoring(screenID) {
+				return
+			}
+			if _, recording := m.activeRecordings.Load(screenID); !recording {
+				break
+			}
+			time.Sleep(time.Second)
+		}
+		m.stopWorkerMonitor(screenID)
+		if _, exists := m.getStreamerConfig(screenID); exists && m.getRecordingConfig().WorkerEnabled && m.IsMonitoring(screenID) {
+			m.startWorkerMonitor(screenID)
+		}
+	}()
 }
 
 func (m *ValidationManager) getOutputDirectory() string {
@@ -513,6 +583,7 @@ func (m *ValidationManager) RemoveStreamer(screenID string) error {
 	m.activeRecordings.Delete(screenID)
 	m.pausedStreamers.Delete(screenID)
 	m.workerRestarts.Delete(screenID)
+	m.workerReloads.Delete(screenID)
 	m.restrictedLives.Delete(screenID)
 	m.restrictedChecks.Delete(screenID)
 	m.streamerSettings.Delete(screenID)

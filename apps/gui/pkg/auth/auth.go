@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -15,6 +16,29 @@ type TokenResponse struct {
 	AccessToken string `json:"access_token"`
 	TokenType   string `json:"token_type"`
 	Scope       string `json:"scope"`
+}
+
+var proxyMu sync.RWMutex
+var proxyURL string
+
+func SetProxyURL(rawURL string) {
+	proxyMu.Lock()
+	proxyURL = strings.TrimSpace(rawURL)
+	proxyMu.Unlock()
+}
+
+func newHTTPClient(timeout time.Duration) *http.Client {
+	proxyMu.RLock()
+	rawProxy := proxyURL
+	proxyMu.RUnlock()
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if rawProxy != "" {
+		if u, err := url.Parse(rawProxy); err == nil {
+			transport.Proxy = http.ProxyURL(u)
+		}
+	}
+	return &http.Client{Timeout: timeout, Transport: transport}
 }
 
 func BuildAuthorizeURL(clientID, redirectURI, state string) string {
@@ -48,7 +72,7 @@ func ExchangeCode(clientID, clientSecret, redirectURI, code string) (*TokenRespo
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Api-Version", "2.0")
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := newHTTPClient(15 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -90,7 +114,7 @@ func VerifyAccessToken(accessToken string) error {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("X-Api-Version", "2.0")
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := newHTTPClient(10 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
