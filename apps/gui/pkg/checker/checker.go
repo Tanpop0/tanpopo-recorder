@@ -42,6 +42,26 @@ func LiveSessionKey(info *StreamInfo) string {
 	return "current-live"
 }
 
+// SameLiveSessionForSuppression returns true when a previously restricted live
+// should still suppress recording for the current candidate. Some legacy Cookie
+// responses do not expose a stable movie_id and may change created/current-live
+// style keys between checks, so only two different explicit movie IDs are
+// treated as a confirmed new session.
+func SameLiveSessionForSuppression(restrictedKey, currentKey string) bool {
+	restrictedKey = strings.TrimSpace(restrictedKey)
+	currentKey = strings.TrimSpace(currentKey)
+	if restrictedKey == "" {
+		return false
+	}
+	if currentKey == "" || restrictedKey == currentKey {
+		return true
+	}
+	if strings.HasPrefix(restrictedKey, "movie:") && strings.HasPrefix(currentKey, "movie:") {
+		return false
+	}
+	return true
+}
+
 type currentLiveResp struct {
 	Movie struct {
 		ID          any    `json:"id"`

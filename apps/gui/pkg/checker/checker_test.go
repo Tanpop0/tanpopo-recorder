@@ -40,3 +40,27 @@ func TestLiveSessionKey(t *testing.T) {
 		t.Fatalf("LiveSessionKey(fallback) = %q, want current-live", got)
 	}
 }
+
+func TestSameLiveSessionForSuppression(t *testing.T) {
+	tests := []struct {
+		name          string
+		restrictedKey string
+		currentKey    string
+		want          bool
+	}{
+		{name: "same movie", restrictedKey: "movie:1", currentKey: "movie:1", want: true},
+		{name: "new explicit movie", restrictedKey: "movie:1", currentKey: "movie:2", want: false},
+		{name: "created can be unstable", restrictedKey: "created:100", currentKey: "created:200", want: true},
+		{name: "fallback stays suppressed", restrictedKey: "current-live", currentKey: "created:200", want: true},
+		{name: "missing current key stays suppressed", restrictedKey: "movie:1", currentKey: "", want: true},
+		{name: "missing restricted key does not suppress", restrictedKey: "", currentKey: "movie:1", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := SameLiveSessionForSuppression(tt.restrictedKey, tt.currentKey); got != tt.want {
+				t.Fatalf("SameLiveSessionForSuppression(%q, %q) = %v, want %v", tt.restrictedKey, tt.currentKey, got, tt.want)
+			}
+		})
+	}
+}

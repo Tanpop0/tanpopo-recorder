@@ -15,7 +15,7 @@
 在仓库根目录运行：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\cdp-capture-hls.ps1 -ScreenId example_user -Seconds 90
+powershell -ExecutionPolicy Bypass -File .\scripts\cdp-capture-hls.ps1 -ScreenId riha_04060 -Seconds 90
 ```
 
 脚本会使用独立浏览器资料目录：

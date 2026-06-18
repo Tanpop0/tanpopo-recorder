@@ -201,7 +201,9 @@ func runMonitorJob(job *Job, notifier *stdoutNotifier, stopCh <-chan struct{}) E
 		default:
 		}
 
-		notifier.NotifyStatus(job.ScreenID, "monitoring", "Worker monitoring for live stream...")
+		if restrictedLiveKey == "" {
+			notifier.NotifyStatus(job.ScreenID, "monitoring", "Worker monitoring for live stream...")
+		}
 		info, err := checker.CheckStreamStatusWithAuth(job.ScreenID, checker.AuthOptions{
 			Mode:          job.Auth.Mode,
 			AccessToken:   job.Auth.AccessToken,
@@ -231,7 +233,7 @@ func runMonitorJob(job *Job, notifier *stdoutNotifier, stopCh <-chan struct{}) E
 		}
 		liveKey := checker.LiveSessionKey(info)
 		if restrictedLiveKey != "" {
-			if liveKey == restrictedLiveKey {
+			if checker.SameLiveSessionForSuppression(restrictedLiveKey, liveKey) {
 				if waitOrStop(interval, stopCh) {
 					return Event{Type: "result", ScreenID: job.ScreenID, StoppedByUser: true}
 				}

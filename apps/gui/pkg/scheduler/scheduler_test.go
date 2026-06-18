@@ -31,6 +31,14 @@ func TestClassifyRecordingStatusFailedAuthPlaceholder(t *testing.T) {
 	}
 }
 
+func TestClassifyRecordingStatusFailedNetworkStall(t *testing.T) {
+	rc := RecordingConfig{MinDurationSeconds: 10}
+	got := classifyRecordingStatus("00:03:25", 50*1024*1024, false, fmt.Errorf("ffmpeg media progress stalled: media progress stalled for 3m0s"), rc)
+	if got != "failed_network" {
+		t.Fatalf("classifyRecordingStatus() = %q, want failed_network", got)
+	}
+}
+
 func TestClassifyRecordingStatusInterrupted(t *testing.T) {
 	got := classifyRecordingStatus("00:00:01", 1, true, nil, RecordingConfig{MinDurationSeconds: 10})
 	if got != "manual_stopped" {
@@ -92,8 +100,11 @@ func TestRecordRestrictedFailureSuppressesAfterTwoAttempts(t *testing.T) {
 	if !manager.isRestrictedLive("member_user", "movie:1") {
 		t.Fatal("live not suppressed after two failures")
 	}
+	if !manager.isRestrictedLive("member_user", "created:2") {
+		t.Fatal("weak live session was incorrectly released")
+	}
 	if manager.isRestrictedLive("member_user", "movie:2") {
-		t.Fatal("new live session was incorrectly suppressed")
+		t.Fatal("new explicit movie session was incorrectly suppressed")
 	}
 }
 

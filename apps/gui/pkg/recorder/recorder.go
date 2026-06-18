@@ -88,6 +88,11 @@ var (
 
 var hlsVariantPattern = regexp.MustCompile(`(/hls/)(\d+\.\d+)(/media(?:\.\d+)?\.m3u8)`)
 
+const (
+	startupNoMediaProgressTimeout = 2 * time.Minute
+	mediaProgressStallTimeout     = 3 * time.Minute
+)
+
 func toolExecutableNames(toolName string) []string {
 	if stdruntime.GOOS == "windows" {
 		return []string{toolName + ".exe", toolName}
@@ -713,8 +718,12 @@ func RecordLiveStreamWithOptions(streamerID, title, streamURL, outputDir string,
 	var progressMu sync.Mutex
 	var logMu sync.Mutex
 	var restrictedErrMu sync.Mutex
+	var stallMu sync.Mutex
 	lastRestrictedAccessLine := ""
 	lastMediaTime := ""
+	lastMediaProgressAt := startTime
+	sawMediaProgress := false
+	stallReason := ""
 	timeRegex := regexp.MustCompile(`time=([0-9:.]+)`)
 	outTimeRegex := regexp.MustCompile(`out_time=([0-9:.]+)`)
 
@@ -726,6 +735,8 @@ func RecordLiveStreamWithOptions(streamerID, title, streamURL, outputDir string,
 
 		progressMu.Lock()
 		lastMediaTime = mediaTime
+		lastMediaProgressAt = time.Now()
+		sawMediaProgress = true
 		shouldNotify := time.Since(lastProgressUpdate) >= 1*time.Second
 		if shouldNotify {
 			lastProgressUpdate = time.Now()
@@ -798,7 +809,64 @@ func RecordLiveStreamWithOptions(streamerID, title, streamURL, outputDir string,
 	go readPipe(stderrScanner, "stderr")
 	go readPipe(stdoutScanner, "stdout")
 
+	watchdogDone := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-watchdogDone:
+				return
+			case <-ticker.C:
+				if h.stopRequested.Load() {
+					continue
+				}
+
+				progressMu.Lock()
+				progressSeen := sawMediaProgress
+				lastProgress := lastMediaProgressAt
+				progressMu.Unlock()
+
+				reason := ""
+				if !progressSeen && time.Since(startTime) >= startupNoMediaProgressTimeout {
+					reason = fmt.Sprintf("no media progress for %s after start", startupNoMediaProgressTimeout)
+				} else if progressSeen && time.Since(lastProgress) >= mediaProgressStallTimeout {
+					reason = fmt.Sprintf("media progress stalled for %s", mediaProgressStallTimeout)
+				}
+				if reason == "" {
+					continue
+				}
+
+				stallMu.Lock()
+				if stallReason == "" {
+					stallReason = reason
+				}
+				alreadyMarked := stallReason != reason
+				stallMu.Unlock()
+				if alreadyMarked {
+					return
+				}
+
+				if notifier != nil {
+					notifier.NotifyAppLog(fmt.Sprintf("[%s] FFmpeg media progress stalled: %s; stopping current recorder", streamerID, reason))
+				}
+				if h.stdin != nil {
+					_, _ = io.WriteString(h.stdin, "q\n")
+					_ = h.stdin.Close()
+				}
+				if h.cmd.Process != nil {
+					go func(cmd *exec.Cmd) {
+						time.Sleep(8 * time.Second)
+						_ = cmd.Process.Kill()
+					}(h.cmd)
+				}
+				return
+			}
+		}
+	}()
+
 	err = cmd.Wait()
+	close(watchdogDone)
 	wg.Wait()
 
 	if _, statErr := os.Stat(tempOutputPath); statErr == nil && plan.remuxToMP4 {
@@ -856,6 +924,14 @@ func RecordLiveStreamWithOptions(streamerID, title, streamURL, outputDir string,
 	}
 
 	stoppedByUser := h.stopRequested.Load()
+	mediaStallError := func() error {
+		stallMu.Lock()
+		defer stallMu.Unlock()
+		if strings.TrimSpace(stallReason) == "" || stoppedByUser {
+			return nil
+		}
+		return fmt.Errorf("ffmpeg media progress stalled: %s", stallReason)
+	}
 	withRestrictedAccessDetail := func(base error) error {
 		restrictedErrMu.Lock()
 		detail := lastRestrictedAccessLine
@@ -885,12 +961,26 @@ func RecordLiveStreamWithOptions(streamerID, title, streamURL, outputDir string,
 				notifier.NotifyAppLog(fmt.Sprintf("[%s] Exited non-zero, duration %s", streamerID, durationStr))
 			}
 			recErr := withRestrictedAccessDetail(fmt.Errorf("ffmpeg exited non-zero: %w", err))
+			if stallErr := mediaStallError(); stallErr != nil {
+				recErr = stallErr
+			}
 			writeInfo(false, recErr)
 			return durationStr, finalOutputPath, fileSize, false, recErr
 		}
 		recErr := withRestrictedAccessDetail(fmt.Errorf("ffmpeg execution failed: %w", err))
+		if stallErr := mediaStallError(); stallErr != nil {
+			recErr = stallErr
+		}
 		writeInfo(false, recErr)
 		return durationStr, finalOutputPath, fileSize, false, recErr
+	}
+
+	if stallErr := mediaStallError(); stallErr != nil {
+		if notifier != nil {
+			notifier.NotifyAppLog(fmt.Sprintf("[%s] Recording stopped after media progress stall, duration %s", streamerID, durationStr))
+		}
+		writeInfo(false, stallErr)
+		return durationStr, finalOutputPath, fileSize, false, stallErr
 	}
 
 	if placeholderErr := detectLoginPlaceholderRecording(finalOutputPath, fileSize, options.FFprobePath); placeholderErr != nil {

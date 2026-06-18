@@ -1,4 +1,4 @@
-﻿# Root ignore rules
+# Root ignore rules
 
 # Go build/test cache
 .gocache/
@@ -19,6 +19,7 @@ GOCACHE/
 
 # Wails build output
 **/build/bin/
+apps/gui/build/
 apps/gui/frontend/dist/
 
 # Local runtime data

@@ -389,7 +389,15 @@ func (m *ValidationManager) isRestrictedLive(screenID, liveKey string) bool {
 		return false
 	}
 	key, ok := value.(string)
-	return ok && key == liveKey
+	if !ok {
+		return false
+	}
+	if checker.SameLiveSessionForSuppression(key, liveKey) {
+		return true
+	}
+	m.restrictedLives.Delete(screenID)
+	m.restrictedChecks.Delete(screenID)
+	return false
 }
 
 func (m *ValidationManager) clearRestrictedLive(screenID string) bool {
@@ -619,6 +627,10 @@ func (m *ValidationManager) checkAndRecord(screenID string) {
 	}
 
 	if info.IsLive {
+		liveKey := checker.LiveSessionKey(info)
+		if isForcedCookieAuth(auth) && m.isRestrictedLive(screenID, liveKey) {
+			return
+		}
 		if m.notifier != nil && auth.CookieEnabled && (auth.Mode == "auto" || auth.Mode == "cookie") {
 			m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Cookie auth used for live URL resolution", screenID))
 		}
@@ -631,7 +643,7 @@ func (m *ValidationManager) checkAndRecord(screenID string) {
 			return
 		}
 		info = confirmedInfo
-		liveKey := checker.LiveSessionKey(info)
+		liveKey = checker.LiveSessionKey(info)
 		if isForcedCookieAuth(auth) && m.isRestrictedLive(screenID, liveKey) {
 			return
 		}
@@ -1157,7 +1169,7 @@ func classifyErrorCategory(message string) string {
 		return "auth"
 	case strings.Contains(lower, "proxy"), strings.Contains(lower, "socks"), strings.Contains(lower, "connection refused"):
 		return "proxy"
-	case strings.Contains(lower, "timeout"), strings.Contains(lower, "i/o timeout"), strings.Contains(lower, "network"), strings.Contains(lower, "connection reset"), strings.Contains(lower, "no such host"), strings.Contains(lower, "503"), strings.Contains(lower, "429"):
+	case strings.Contains(lower, "media progress stalled"), strings.Contains(lower, "timeout"), strings.Contains(lower, "i/o timeout"), strings.Contains(lower, "network"), strings.Contains(lower, "connection reset"), strings.Contains(lower, "connection to "), strings.Contains(lower, "connection failed"), strings.Contains(lower, "input/output error"), strings.Contains(lower, "end of file"), strings.Contains(lower, "no such host"), strings.Contains(lower, "503"), strings.Contains(lower, "429"):
 		return "network"
 	case strings.Contains(lower, "stream url is empty"), strings.Contains(lower, "no stream url"), strings.Contains(lower, "m3u8"):
 		return "stream"
