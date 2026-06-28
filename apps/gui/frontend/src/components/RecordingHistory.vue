@@ -269,7 +269,7 @@ onMounted(() => {
   refreshHistory()
 })
 
-defineExpose({ refreshHistory })
+defineExpose({ refreshHistory, filterByStreamer })
 </script>
 
 <style scoped>

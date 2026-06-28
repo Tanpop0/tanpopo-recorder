@@ -149,6 +149,7 @@
               <div class="detail-actions">
                 <el-button size="small" @click="openLink(selectedStreamer.screen_id)">打开主页</el-button>
                 <el-button size="small" @click="openDetails(selectedStreamer)">完整详情</el-button>
+                <el-button size="small" type="primary" plain @click="showStreamerHistory(selectedStreamer)">历史录播</el-button>
                 <el-button size="small" type="danger" plain @click="removeStreamer(selectedStreamer.screen_id)">删除主播</el-button>
                 <el-button
                   size="small"
@@ -192,7 +193,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import RecordingHistory from './RecordingHistory.vue'
 import Settings from './Settings.vue'
 import OperationLog from './OperationLog.vue'
@@ -867,6 +868,17 @@ const openDetails = (row) => {
   detailRow.value = row
   selectStreamer(row)
   showDetailDialog.value = true
+}
+
+const showStreamerHistory = async (row) => {
+  if (!row?.screen_id) return
+  currentTab.value = 'history'
+  await nextTick()
+  if (historyRef.value?.filterByStreamer) {
+    historyRef.value.filterByStreamer(row.screen_id)
+  } else if (historyRef.value?.refreshHistory) {
+    historyRef.value.refreshHistory()
+  }
 }
 
 onMounted(() => {

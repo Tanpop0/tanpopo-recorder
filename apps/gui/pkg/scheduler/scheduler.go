@@ -942,6 +942,10 @@ func (m *ValidationManager) handleWorkerEvent(fallbackScreenID string, evt worke
 	if screenID == "" {
 		screenID = fallbackScreenID
 	}
+	_, paused := m.pausedStreamers.Load(screenID)
+	if paused && evt.Type != "result" {
+		return
+	}
 
 	switch evt.Type {
 	case "start":
@@ -984,8 +988,13 @@ func (m *ValidationManager) handleWorkerEvent(fallbackScreenID string, evt worke
 			m.notifier.AddRecordingHistoryWithStatus(screenID, evt.FilePath, evt.Duration, evt.FileSize, historyStatus)
 		}
 		if evt.Error != "" && !evt.StoppedByUser && m.notifier != nil {
-			m.notifier.NotifyStatus(screenID, "error", fmt.Sprintf("Recording failed: %v", evt.Error))
-			m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Recording failed: %v", screenID, evt.Error))
+			if !paused {
+				m.notifier.NotifyStatus(screenID, "error", fmt.Sprintf("Recording failed: %v", evt.Error))
+				m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Recording failed: %v", screenID, evt.Error))
+			}
+		}
+		if paused {
+			return
 		}
 		if evt.Error != "" && !evt.StoppedByUser {
 			m.sendRecordingNotification("error", screenID, m.recordingErrorMessage(screenID, "", evt.Error))

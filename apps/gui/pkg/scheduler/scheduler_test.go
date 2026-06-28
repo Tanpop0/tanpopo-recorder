@@ -5,7 +5,27 @@ import (
 	"testing"
 
 	"github.com/user/twitcasting-recorder/apps/gui/pkg/config"
+	"github.com/user/twitcasting-recorder/apps/gui/pkg/workerproc"
 )
+
+type testNotifier struct {
+	statuses []string
+	history  []string
+}
+
+func (n *testNotifier) NotifyStatus(screenID, status, message string) {
+	n.statuses = append(n.statuses, fmt.Sprintf("%s:%s:%s", screenID, status, message))
+}
+
+func (n *testNotifier) NotifyAppLog(message string) {}
+
+func (n *testNotifier) AddRecordingHistory(streamerID, filePath, duration string, fileSize int64) {
+	n.AddRecordingHistoryWithStatus(streamerID, filePath, duration, fileSize, "completed")
+}
+
+func (n *testNotifier) AddRecordingHistoryWithStatus(streamerID, filePath, duration string, fileSize int64, status string) {
+	n.history = append(n.history, fmt.Sprintf("%s:%s", streamerID, status))
+}
 
 func TestClassifyRecordingStatusShort(t *testing.T) {
 	rc := RecordingConfig{MinDurationSeconds: 10}
@@ -114,5 +134,31 @@ func TestSetRecordingConfigPreservesZeroStartupStagger(t *testing.T) {
 
 	if got := manager.getRecordingConfig().StartupStaggerSeconds; got != 0 {
 		t.Fatalf("StartupStaggerSeconds = %d, want 0", got)
+	}
+}
+
+func TestPausedStreamerIgnoresLateWorkerStatus(t *testing.T) {
+	notifier := &testNotifier{}
+	manager := NewManager(notifier, nil)
+	manager.pausedStreamers.Store("ruru", true)
+
+	manager.handleWorkerEvent("ruru", workerproc.Event{Type: "status", ScreenID: "ruru", Status: "recording", Message: "Recording 00:00:03"})
+	if _, ok := manager.activeRecordings.Load("ruru"); ok {
+		t.Fatal("late worker status marked paused streamer as recording")
+	}
+	if len(notifier.statuses) != 0 {
+		t.Fatalf("late worker status notified UI: %+v", notifier.statuses)
+	}
+
+	manager.handleWorkerEvent("ruru", workerproc.Event{
+		Type:          "result",
+		ScreenID:      "ruru",
+		Duration:      "00:01:07",
+		FilePath:      "ruru.mkv",
+		FileSize:      1024,
+		StoppedByUser: true,
+	})
+	if len(notifier.history) != 1 || notifier.history[0] != "ruru:manual_stopped" {
+		t.Fatalf("paused result history = %+v, want manual_stopped", notifier.history)
 	}
 }
