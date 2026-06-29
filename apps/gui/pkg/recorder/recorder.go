@@ -303,13 +303,126 @@ func probeFileDuration(filePath string, ffprobePath string) string {
 type mediaProbeInfo struct {
 	Streams []struct {
 		CodecType string `json:"codec_type"`
+		CodecName string `json:"codec_name"`
 		Width     int    `json:"width"`
 		Height    int    `json:"height"`
+		BitRate   string `json:"bit_rate"`
+		FrameRate string `json:"avg_frame_rate"`
 	} `json:"streams"`
 	Format struct {
 		Duration string `json:"duration"`
 		BitRate  string `json:"bit_rate"`
 	} `json:"format"`
+}
+
+type MediaDetails struct {
+	MediaBitrate int64
+	VideoBitrate int64
+	AudioBitrate int64
+	Width        int
+	Height       int
+	FrameRate    float64
+	VideoCodec   string
+	AudioCodec   string
+}
+
+func ProbeMediaDetails(filePath string, fileSize int64, durationText string, ffprobePath string) MediaDetails {
+	var details MediaDetails
+	if strings.TrimSpace(filePath) == "" {
+		return details
+	}
+	if _, err := os.Stat(filePath); err != nil {
+		return details
+	}
+
+	cmd := exec.Command(findFFprobePath(ffprobePath),
+		"-v", "error",
+		"-show_entries", "stream=codec_type,codec_name,width,height,bit_rate,avg_frame_rate:format=duration,bit_rate",
+		"-of", "json",
+		filePath,
+	)
+	prepareCommand(cmd)
+
+	out, err := cmd.Output()
+	if err != nil {
+		return details
+	}
+
+	var info mediaProbeInfo
+	if err := json.Unmarshal(out, &info); err != nil {
+		return details
+	}
+
+	details.MediaBitrate, _ = strconv.ParseInt(strings.TrimSpace(info.Format.BitRate), 10, 64)
+	if details.MediaBitrate <= 0 {
+		if duration := mediaDurationSeconds(info.Format.Duration, durationText); duration > 0 && fileSize > 0 {
+			details.MediaBitrate = int64(float64(fileSize*8) / duration)
+		}
+	}
+
+	for _, stream := range info.Streams {
+		bitRate, _ := strconv.ParseInt(strings.TrimSpace(stream.BitRate), 10, 64)
+		switch stream.CodecType {
+		case "video":
+			if details.VideoCodec == "" {
+				details.VideoCodec = stream.CodecName
+			}
+			if details.Width == 0 && details.Height == 0 {
+				details.Width = stream.Width
+				details.Height = stream.Height
+			}
+			if details.FrameRate <= 0 {
+				details.FrameRate = parseFrameRate(stream.FrameRate)
+			}
+			if details.VideoBitrate <= 0 {
+				details.VideoBitrate = bitRate
+			}
+		case "audio":
+			if details.AudioCodec == "" {
+				details.AudioCodec = stream.CodecName
+			}
+			if details.AudioBitrate <= 0 {
+				details.AudioBitrate = bitRate
+			}
+		}
+	}
+
+	return details
+}
+
+func mediaDurationSeconds(ffprobeDuration, fallback string) float64 {
+	if f, err := strconv.ParseFloat(strings.TrimSpace(ffprobeDuration), 64); err == nil && f > 0 {
+		return f
+	}
+	parts := strings.Split(strings.TrimSpace(fallback), ":")
+	if len(parts) != 3 {
+		return 0
+	}
+	h, errH := strconv.Atoi(parts[0])
+	m, errM := strconv.Atoi(parts[1])
+	s, errS := strconv.Atoi(parts[2])
+	if errH != nil || errM != nil || errS != nil {
+		return 0
+	}
+	return float64(h*3600 + m*60 + s)
+}
+
+func parseFrameRate(value string) float64 {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "0/0" {
+		return 0
+	}
+	if strings.Contains(value, "/") {
+		parts := strings.SplitN(value, "/", 2)
+		num, errN := strconv.ParseFloat(parts[0], 64)
+		den, errD := strconv.ParseFloat(parts[1], 64)
+		if errN != nil || errD != nil || den == 0 {
+			return 0
+		}
+		return num / den
+	}
+	f, _ := strconv.ParseFloat(value, 64)
+	return f
 }
 
 func detectLoginPlaceholderRecording(filePath string, fileSize int64, ffprobePath string) error {
@@ -578,13 +691,20 @@ func pickStableVariantURL(streamURL, streamerID, qualityMode string, proxyRawURL
 	}
 
 	currentVariant := m[2]
-	if currentVariant == "604.96" {
+	if (mode == "stable" || mode == "medium" || mode == "audio") && currentVariant == "604.96" {
 		return streamURL
 	}
 
 	candidates := []string{"604.96"}
-	if mode == "auto" {
+	switch mode {
+	case "auto":
 		candidates = []string{"705.00", "604.96", "432.00"}
+	case "high":
+		candidates = []string{"705.00", "604.96", "432.00"}
+	case "low":
+		candidates = []string{"432.00", "604.96"}
+	case "stable", "medium", "audio":
+		candidates = []string{"604.96", "432.00"}
 	}
 	for _, v := range candidates {
 		candidateURL := strings.Replace(streamURL, m[0], m[1]+v+m[3], 1)
@@ -610,7 +730,11 @@ func RecordLiveStreamWithOptions(streamerID, title, streamURL, outputDir string,
 	originalStreamURL := streamURL
 	streamURL = pickStableVariantURL(streamURL, streamerID, options.QualityMode, options.ProxyURL)
 	if notifier != nil && streamURL != originalStreamURL {
-		notifier.NotifyAppLog(fmt.Sprintf("[%s] Switched to stable variant stream URL", streamerID))
+		qualityLabel := strings.TrimSpace(options.QualityMode)
+		if qualityLabel == "" {
+			qualityLabel = "stable"
+		}
+		notifier.NotifyAppLog(fmt.Sprintf("[%s] Switched recording quality variant to %s", streamerID, qualityLabel))
 	}
 
 	sanitizedID := sanitizeFilename(streamerID)
@@ -664,11 +788,21 @@ func RecordLiveStreamWithOptions(streamerID, title, streamURL, outputDir string,
 	if strings.TrimSpace(options.ProxyURL) != "" {
 		ffmpegArgs = append(ffmpegArgs, "-http_proxy", strings.TrimSpace(options.ProxyURL))
 	}
+	ffmpegArgs = append(ffmpegArgs, "-i", streamURL)
+	if strings.EqualFold(strings.TrimSpace(options.QualityMode), "audio") {
+		ffmpegArgs = append(ffmpegArgs,
+			"-map", "0:a:0?",
+			"-vn",
+			"-c", "copy",
+		)
+	} else {
+		ffmpegArgs = append(ffmpegArgs,
+			"-map", "0:v:0?",
+			"-map", "0:a:0?",
+			"-c", "copy",
+		)
+	}
 	ffmpegArgs = append(ffmpegArgs,
-		"-i", streamURL,
-		"-map", "0:v:0?",
-		"-map", "0:a:0?",
-		"-c", "copy",
 		"-f", plan.ffmpegFormat,
 		"-progress", "pipe:1",
 		"-nostats",

@@ -483,9 +483,13 @@ const getAuthModeText = (mode) => {
 
 const getQualityModeText = (mode) => {
   switch (String(mode || '').toLowerCase()) {
-    case 'stable': return '稳定中档'
+    case 'stable':
+    case 'medium': return '中档稳定'
     case 'auto': return '自动画质'
-    case 'original': return '原始流'
+    case 'original': return '原始/最高'
+    case 'high': return '高画质'
+    case 'low': return '低画质'
+    case 'audio': return '仅保存音频'
     default: return ''
   }
 }

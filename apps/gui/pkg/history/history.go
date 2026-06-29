@@ -21,6 +21,15 @@ type RecordingRecord struct {
 	EndTime    time.Time `json:"end_time"`
 	Status     string    `json:"status"` // "completed", "failed", "interrupted"
 
+	MediaBitrate int64   `json:"media_bitrate,omitempty"` // total bits per second
+	VideoBitrate int64   `json:"video_bitrate,omitempty"`
+	AudioBitrate int64   `json:"audio_bitrate,omitempty"`
+	Width        int     `json:"width,omitempty"`
+	Height       int     `json:"height,omitempty"`
+	FrameRate    float64 `json:"frame_rate,omitempty"`
+	VideoCodec   string  `json:"video_codec,omitempty"`
+	AudioCodec   string  `json:"audio_codec,omitempty"`
+
 	CommentTextPath    string `json:"comment_text_path,omitempty"`
 	CommentJSONLPath   string `json:"comment_jsonl_path,omitempty"`
 	CommentTextExists  bool   `json:"comment_text_exists,omitempty"`

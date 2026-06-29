@@ -10,9 +10,12 @@
       <el-form-item label="单主播画质策略">
         <el-select v-model="form.qualityMode" style="width: 100%">
           <el-option label="跟随全局" value="" />
-          <el-option label="稳定中档" value="stable" />
+          <el-option label="中档稳定" value="stable" />
+          <el-option label="原始/最高" value="original" />
+          <el-option label="高画质" value="high" />
+          <el-option label="低画质" value="low" />
           <el-option label="自动尝试高/中/低" value="auto" />
-          <el-option label="保持原始流地址" value="original" />
+          <el-option label="仅保存音频" value="audio" />
         </el-select>
       </el-form-item>
       <el-form-item label="单主播封装格式">

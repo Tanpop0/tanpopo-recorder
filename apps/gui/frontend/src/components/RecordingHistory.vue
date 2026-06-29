@@ -45,9 +45,13 @@
               <span v-if="record.nickname">{{ record.nickname }}</span>
               <span>{{ formatSize(record.file_size) }}</span>
               <span>{{ record.duration || '--:--:--' }}</span>
+              <span v-if="formatAverageBitrate(record)">{{ formatAverageBitrate(record) }}</span>
               <span class="status-label" :class="recordHealth(record).level">
                 {{ recordHealth(record).text }}
               </span>
+            </div>
+            <div v-if="mediaSummary(record)" class="media-info">
+              {{ mediaSummary(record) }}
             </div>
             <div class="comment-info">
               <span v-if="record.comment_text_exists" class="comment-badge">评论 TXT</span>
@@ -145,6 +149,57 @@ const formatSize = (bytes) => {
 const formatDate = (dateStr) => {
   if (!dateStr) return '未知时间'
   return new Date(dateStr).toLocaleString()
+}
+
+const parseDurationSeconds = (value) => {
+  const text = String(value || '').trim()
+  const match = text.match(/^(\d+):(\d{1,2}):(\d{1,2})$/)
+  if (!match) return 0
+  return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3])
+}
+
+const averageBitrate = (record) => {
+  const probed = Number(record.media_bitrate || 0)
+  if (probed > 0) return probed
+  const seconds = parseDurationSeconds(record.duration)
+  const bytes = Number(record.file_size || 0)
+  if (seconds <= 0 || bytes <= 0) return 0
+  return (bytes * 8) / seconds
+}
+
+const formatBitrate = (bitsPerSecond) => {
+  const value = Number(bitsPerSecond || 0)
+  if (value <= 0) return ''
+  if (value >= 1000 * 1000) return `${(value / 1000 / 1000).toFixed(2)} Mbps`
+  return `${Math.round(value / 1000)} kbps`
+}
+
+const formatAverageBitrate = (record) => {
+  const value = formatBitrate(averageBitrate(record))
+  return value ? `平均 ${value}` : ''
+}
+
+const mediaSummary = (record) => {
+  const parts = []
+  if (record.width && record.height) {
+    const fps = Number(record.frame_rate || 0)
+    parts.push(`${record.width}x${record.height}${fps > 0 ? ` ${fps.toFixed(fps >= 10 ? 0 : 2)}fps` : ''}`)
+  }
+  if (record.video_codec) {
+    parts.push(`视频 ${record.video_codec}`)
+  }
+  if (record.audio_codec) {
+    parts.push(`音频 ${record.audio_codec}`)
+  }
+  const videoBitrate = formatBitrate(record.video_bitrate)
+  if (videoBitrate) {
+    parts.push(`视频码率 ${videoBitrate}`)
+  }
+  const audioBitrate = formatBitrate(record.audio_bitrate)
+  if (audioBitrate) {
+    parts.push(`音频码率 ${audioBitrate}`)
+  }
+  return parts.join(' / ')
 }
 
 const recordHealth = (record) => {
@@ -423,6 +478,13 @@ defineExpose({ refreshHistory, filterByStreamer })
 
 .comment-info {
   margin-top: 5px;
+}
+
+.media-info {
+  margin-top: 5px;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .streamer-id {

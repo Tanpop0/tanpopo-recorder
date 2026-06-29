@@ -5,7 +5,7 @@
         <div><span>主播 ID</span><strong>{{ streamer.screen_id }}</strong></div>
         <div><span>昵称</span><strong>{{ streamer.nickname || '-' }}</strong></div>
         <div><span>状态</span><strong>{{ statusText(streamer.current_status) }}</strong></div>
-        <div><span>策略</span><strong>{{ streamer.quality_mode || '全局' }} / {{ streamer.container_mode || '全局' }}</strong></div>
+        <div><span>策略</span><strong>{{ qualityText(streamer.quality_mode) }} / {{ containerText(streamer.container_mode) }}</strong></div>
         <div><span>上次更新</span><strong>{{ formatTime(streamer.lastCheckAt) }}</strong></div>
         <div><span>下次预估</span><strong>{{ formatTime(streamer.nextCheckAt) }}</strong></div>
         <div><span>最后成功</span><strong>{{ formatTime(streamer.lastSuccessAt) }}</strong></div>
@@ -55,6 +55,39 @@ const basename = (path) => {
 const formatTime = (value) => {
   if (!value) return '-'
   return new Date(value).toLocaleString()
+}
+
+const qualityText = (mode) => {
+  switch (String(mode || '').toLowerCase()) {
+    case 'stable':
+    case 'medium':
+      return '中档稳定'
+    case 'original':
+      return '原始/最高'
+    case 'high':
+      return '高画质'
+    case 'low':
+      return '低画质'
+    case 'auto':
+      return '自动画质'
+    case 'audio':
+      return '仅保存音频'
+    default:
+      return '全局'
+  }
+}
+
+const containerText = (mode) => {
+  switch (String(mode || '').toLowerCase()) {
+    case 'mkv':
+      return 'MKV'
+    case 'ts':
+      return 'TS'
+    case 'mp4':
+      return 'MP4'
+    default:
+      return '全局'
+  }
 }
 
 const openLogFolder = async () => {

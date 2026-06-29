@@ -39,10 +39,14 @@
           </el-form-item>
           <el-form-item label="画质策略">
             <el-select v-model="form.recording.qualityMode" style="width: 100%">
-              <el-option label="稳定中档 (推荐)" value="stable" />
+              <el-option label="中档稳定 (推荐)" value="stable" />
+              <el-option label="原始/最高" value="original" />
+              <el-option label="高画质" value="high" />
+              <el-option label="低画质" value="low" />
               <el-option label="自动尝试高/中/低" value="auto" />
-              <el-option label="保持原始流地址" value="original" />
+              <el-option label="仅保存音频" value="audio" />
             </el-select>
+            <div class="form-tip">“仅保存音频”会减小成品文件，但不保证减少下载流量。</div>
           </el-form-item>
           <el-form-item label="封装格式">
             <el-select v-model="form.recording.containerMode" style="width: 100%">

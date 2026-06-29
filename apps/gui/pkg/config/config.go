@@ -117,7 +117,7 @@ func applyDefaults(cfg *Config) {
 
 	qualityMode := strings.ToLower(strings.TrimSpace(cfg.Recording.QualityMode))
 	switch qualityMode {
-	case "auto", "stable", "original":
+	case "auto", "stable", "original", "high", "medium", "low", "audio":
 		cfg.Recording.QualityMode = qualityMode
 	default:
 		cfg.Recording.QualityMode = "stable"
@@ -188,7 +188,7 @@ func applyDefaults(cfg *Config) {
 func normalizeQualityMode(value string) string {
 	mode := strings.ToLower(strings.TrimSpace(value))
 	switch mode {
-	case "", "auto", "stable", "original":
+	case "", "auto", "stable", "original", "high", "medium", "low", "audio":
 		return mode
 	default:
 		return ""

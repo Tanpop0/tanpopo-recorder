@@ -138,3 +138,17 @@ func TestDetectLoginPlaceholderRecordingIgnoresMissingProbeData(t *testing.T) {
 		t.Fatalf("detectLoginPlaceholderRecording() = %v, want nil", err)
 	}
 }
+
+func TestParseFrameRate(t *testing.T) {
+	got := parseFrameRate("30000/1001")
+	if got < 29.9 || got > 30.0 {
+		t.Fatalf("parseFrameRate() = %f, want about 29.97", got)
+	}
+}
+
+func TestMediaDurationSecondsFallsBackToTextDuration(t *testing.T) {
+	got := mediaDurationSeconds("", "01:02:03")
+	if got != 3723 {
+		t.Fatalf("mediaDurationSeconds() = %f, want 3723", got)
+	}
+}

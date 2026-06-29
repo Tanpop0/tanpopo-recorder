@@ -188,16 +188,32 @@ func (a *App) AddRecordingHistoryWithStatus(streamerID, filePath, duration strin
 		status = "completed"
 	}
 
+	ffprobePath := ""
+	a.mu.RLock()
+	if a.config != nil {
+		ffprobePath = a.config.Recording.FFprobePath
+	}
+	a.mu.RUnlock()
+	media := recorder.ProbeMediaDetails(filePath, fileSize, duration, ffprobePath)
+
 	now := time.Now()
 	record := history.RecordingRecord{
-		ID:         uuid.New().String(),
-		StreamerID: streamerID,
-		FilePath:   filePath,
-		FileSize:   fileSize,
-		Duration:   duration,
-		StartTime:  now,
-		EndTime:    now,
-		Status:     status,
+		ID:           uuid.New().String(),
+		StreamerID:   streamerID,
+		FilePath:     filePath,
+		FileSize:     fileSize,
+		Duration:     duration,
+		StartTime:    now,
+		EndTime:      now,
+		Status:       status,
+		MediaBitrate: media.MediaBitrate,
+		VideoBitrate: media.VideoBitrate,
+		AudioBitrate: media.AudioBitrate,
+		Width:        media.Width,
+		Height:       media.Height,
+		FrameRate:    media.FrameRate,
+		VideoCodec:   media.VideoCodec,
+		AudioCodec:   media.AudioCodec,
 	}
 
 	if err := a.historyManager.AddRecord(record); err != nil {
