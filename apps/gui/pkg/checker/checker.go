@@ -104,6 +104,16 @@ func newHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{Timeout: timeout, Transport: transport}
 }
 
+func isTimeoutError(err error) bool {
+	type timeout interface {
+		Timeout() bool
+	}
+	if t, ok := err.(timeout); ok {
+		return t.Timeout()
+	}
+	return false
+}
+
 // CheckStreamStatus checks if a streamer is live and returns stream info.
 func CheckStreamStatus(screenID, accessToken string) (*StreamInfo, error) {
 	return CheckStreamStatusWithAuth(screenID, AuthOptions{AccessToken: accessToken})
@@ -218,6 +228,12 @@ func checkViaLegacyStreamServer(screenID, accessToken, cookie string) (*StreamIn
 
 	client := newHTTPClient(10 * time.Second)
 	resp, err := client.Do(req)
+	if err != nil {
+		if isTimeoutError(err) {
+			time.Sleep(800 * time.Millisecond)
+			resp, err = client.Do(req.Clone(req.Context()))
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}

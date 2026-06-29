@@ -114,6 +114,16 @@
               <div class="detail-section policy-section">
                 <div class="section-label">单主播策略</div>
                 <div class="policy-control">
+                  <span>画质</span>
+                  <el-select
+                    :model-value="selectedStreamer.quality_mode || ''"
+                    size="small"
+                    @change="value => updateStreamerQualityMode(selectedStreamer, value)"
+                  >
+                    <el-option v-for="item in qualityModeOptions" :key="item.value" :label="item.label" :value="item.value" />
+                  </el-select>
+                </div>
+                <div class="policy-control">
                   <span>鉴权</span>
                   <el-select
                     :model-value="selectedStreamer.auth_mode || ''"
@@ -148,7 +158,6 @@
 
               <div class="detail-actions">
                 <el-button size="small" @click="openLink(selectedStreamer.screen_id)">打开主页</el-button>
-                <el-button size="small" @click="openDetails(selectedStreamer)">完整详情</el-button>
                 <el-button size="small" type="primary" plain @click="showStreamerHistory(selectedStreamer)">历史录播</el-button>
                 <el-button size="small" type="danger" plain @click="removeStreamer(selectedStreamer.screen_id)">删除主播</el-button>
                 <el-button
@@ -231,6 +240,16 @@ const authModeOptions = [
   { value: '', label: '继承全局' },
   { value: 'cookie', label: '强制 Cookie' },
   { value: 'no_cookie', label: '禁用 Cookie' },
+]
+
+const qualityModeOptions = [
+  { value: '', label: '跟随全局' },
+  { value: 'original', label: '原始/最高' },
+  { value: 'high', label: '高画质' },
+  { value: 'stable', label: '中档稳定' },
+  { value: 'low', label: '低画质' },
+  { value: 'auto', label: '自动尝试' },
+  { value: 'audio', label: '仅保存音频' },
 ]
 
 const appendOpLog = (msg) => {
@@ -827,6 +846,24 @@ const updateStreamerAuthMode = async (row, authMode) => {
   } catch (e) {
     row.auth_mode = previous
     ElMessage.error(`更新策略失败: ${e?.message || e}`)
+  }
+}
+
+const updateStreamerQualityMode = async (row, qualityMode) => {
+  if (!row?.screen_id) return
+  const previous = row.quality_mode || ''
+  row.quality_mode = qualityMode || ''
+  try {
+    const err = await UpdateStreamerOptions(row.screen_id, row.quality_mode || '', row.container_mode || '', row.auth_mode || '', !!row.telegram_enabled)
+    if (err) {
+      row.quality_mode = previous
+      ElMessage.error(`更新画质策略失败: ${err}`)
+      return
+    }
+    appendOpLog(`${row.screen_id} 画质策略: ${getQualityModeText(row.quality_mode) || '跟随全局'}`)
+  } catch (e) {
+    row.quality_mode = previous
+    ElMessage.error(`更新画质策略失败: ${e?.message || e}`)
   }
 }
 
