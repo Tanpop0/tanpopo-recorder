@@ -24,6 +24,7 @@ frontend/package.json.md5
 # Wails Build Artifacts
 /build/bin/
 /build/wails.exe
+/build/appicon.png
 /frontend/wailsjs/
 
 # Application Data (User Specific - DO NOT COMMIT)

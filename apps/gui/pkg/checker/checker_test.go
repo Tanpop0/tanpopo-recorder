@@ -64,3 +64,18 @@ func TestSameLiveSessionForSuppression(t *testing.T) {
 		})
 	}
 }
+
+func TestProtectedLiveErrorMetadata(t *testing.T) {
+	err := &ProtectedLiveError{ScreenID: "i70_o0", Title: "member live", LiveKey: "movie:123"}
+
+	protected, ok := AsProtectedLiveError(err)
+	if !ok {
+		t.Fatal("AsProtectedLiveError() = false, want true")
+	}
+	if protected.LiveKey != "movie:123" {
+		t.Fatalf("protected.LiveKey = %q, want movie:123", protected.LiveKey)
+	}
+	if protected.Error() != "current live is protected (is_protected=true)" {
+		t.Fatalf("protected.Error() = %q", protected.Error())
+	}
+}

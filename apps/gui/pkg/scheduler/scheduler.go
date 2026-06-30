@@ -3,7 +3,6 @@ package scheduler
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -11,13 +10,18 @@ import (
 	"github.com/user/twitcasting-recorder/apps/gui/pkg/checker"
 	"github.com/user/twitcasting-recorder/apps/gui/pkg/config"
 	"github.com/user/twitcasting-recorder/apps/gui/pkg/notify"
+	"github.com/user/twitcasting-recorder/apps/gui/pkg/paths"
 	"github.com/user/twitcasting-recorder/apps/gui/pkg/recorder"
 	"github.com/user/twitcasting-recorder/apps/gui/pkg/workerproc"
 
 	"github.com/robfig/cron/v3"
 )
 
-const liveConfirmDelay = 5 * time.Second
+const (
+	liveConfirmDelay                   = 5 * time.Second
+	forcedCookieCheckFailureThreshold  = 3
+	forcedCookieStatusCheckJitterLimit = 12 * time.Second
+)
 
 type StatusNotifier interface {
 	NotifyStatus(screenID, status, message string)
@@ -77,6 +81,7 @@ type ValidationManager struct {
 	workerReloads    sync.Map // map[string]bool - config reload pending until recording finishes
 	restrictedLives  sync.Map // map[string]string - live session suppressed after repeated access failures
 	restrictedChecks sync.Map // map[string]restrictedCheck - pending restricted access confirmation
+	checkFailures    sync.Map // map[string]int - consecutive transient status check failures
 	streamerSettings sync.Map // map[string]config.StreamerConfig
 	cronEntries      sync.Map // map[string]cron.EntryID
 	cron             *cron.Cron
@@ -102,7 +107,7 @@ type restrictedCheck struct {
 
 func NewManager(notifier StatusNotifier, cfg *config.Config) *ValidationManager {
 	outputDir := "."
-	auth := AuthConfig{Mode: "auto", CookieFile: "cookies.txt"}
+	auth := AuthConfig{Mode: "auto", CookieFile: paths.DefaultCookiesPath()}
 	recording := RecordingConfig{QualityMode: "stable", ContainerMode: "mkv", MinDurationSeconds: 10, StartupStaggerSeconds: 2, WorkerCheckIntervalSeconds: 30, WorkerMaxRestarts: 8}
 
 	if cfg != nil {
@@ -114,7 +119,7 @@ func NewManager(notifier StatusNotifier, cfg *config.Config) *ValidationManager 
 		auth.CookieEnabled = cfg.Cookies.Enabled
 		auth.CookieFile = cfg.Cookies.FilePath
 		if auth.CookieFile == "" {
-			auth.CookieFile = "cookies.txt"
+			auth.CookieFile = paths.DefaultCookiesPath()
 		}
 		recording.QualityMode = cfg.Recording.QualityMode
 		recording.ContainerMode = cfg.Recording.ContainerMode
@@ -196,7 +201,7 @@ func (m *ValidationManager) SetAuthConfig(auth AuthConfig) {
 		auth.Mode = "auto"
 	}
 	if auth.CookieFile == "" {
-		auth.CookieFile = "cookies.txt"
+		auth.CookieFile = paths.DefaultCookiesPath()
 	}
 	m.authMu.Lock()
 	changed := m.auth != auth
@@ -362,7 +367,7 @@ func (m *ValidationManager) getAuthConfigForStreamer(screenID string) AuthConfig
 		auth.Mode = "auto"
 	}
 	if auth.CookieFile == "" {
-		auth.CookieFile = "cookies.txt"
+		auth.CookieFile = paths.DefaultCookiesPath()
 	}
 	if value, ok := m.streamerSettings.Load(screenID); ok {
 		if streamer, okCast := value.(config.StreamerConfig); okCast {
@@ -379,49 +384,6 @@ func (m *ValidationManager) getAuthConfigForStreamer(screenID string) AuthConfig
 	return auth
 }
 
-func isForcedCookieAuth(auth AuthConfig) bool {
-	return auth.CookieEnabled && strings.EqualFold(strings.TrimSpace(auth.Mode), "cookie")
-}
-
-func (m *ValidationManager) isRestrictedLive(screenID, liveKey string) bool {
-	value, ok := m.restrictedLives.Load(screenID)
-	if !ok {
-		return false
-	}
-	key, ok := value.(string)
-	if !ok {
-		return false
-	}
-	if checker.SameLiveSessionForSuppression(key, liveKey) {
-		return true
-	}
-	m.restrictedLives.Delete(screenID)
-	m.restrictedChecks.Delete(screenID)
-	return false
-}
-
-func (m *ValidationManager) clearRestrictedLive(screenID string) bool {
-	_, existed := m.restrictedLives.LoadAndDelete(screenID)
-	m.restrictedChecks.Delete(screenID)
-	return existed
-}
-
-func (m *ValidationManager) recordRestrictedFailure(screenID, liveKey string) int {
-	check := restrictedCheck{LiveKey: liveKey}
-	if value, ok := m.restrictedChecks.Load(screenID); ok {
-		if previous, okCast := value.(restrictedCheck); okCast && previous.LiveKey == liveKey {
-			check = previous
-		}
-	}
-	check.Count++
-	m.restrictedChecks.Store(screenID, check)
-	if check.Count >= 2 {
-		m.restrictedChecks.Delete(screenID)
-		m.restrictedLives.Store(screenID, liveKey)
-	}
-	return check.Count
-}
-
 func (m *ValidationManager) getRecordingConfig() RecordingConfig {
 	m.recordingMu.RLock()
 	defer m.recordingMu.RUnlock()
@@ -432,51 +394,6 @@ func (m *ValidationManager) getNotificationsConfig() config.NotificationsConfig 
 	m.notificationsMu.RLock()
 	defer m.notificationsMu.RUnlock()
 	return m.notifications
-}
-
-func (m *ValidationManager) getStreamerConfig(screenID string) (config.StreamerConfig, bool) {
-	if value, ok := m.streamerSettings.Load(screenID); ok {
-		if streamer, okCast := value.(config.StreamerConfig); okCast {
-			return streamer, true
-		}
-	}
-
-	var found config.StreamerConfig
-	ok := false
-	m.streamerSettings.Range(func(_, value any) bool {
-		streamer, okCast := value.(config.StreamerConfig)
-		if !okCast {
-			return true
-		}
-		if strings.EqualFold(strings.TrimSpace(streamer.ScreenID), strings.TrimSpace(screenID)) {
-			found = streamer
-			ok = true
-			return false
-		}
-		return true
-	})
-	return found, ok
-}
-
-func (m *ValidationManager) telegramEnabledForStreamer(screenID string) bool {
-	streamer, ok := m.getStreamerConfig(screenID)
-	return ok && streamer.TelegramEnabled
-}
-
-func (m *ValidationManager) streamerDisplayName(screenID string) string {
-	streamer, ok := m.getStreamerConfig(screenID)
-	if !ok {
-		return strings.TrimSpace(screenID)
-	}
-	nickname := strings.TrimSpace(streamer.Nickname)
-	id := strings.TrimSpace(streamer.ScreenID)
-	if id == "" {
-		id = strings.TrimSpace(screenID)
-	}
-	if nickname == "" {
-		return id
-	}
-	return fmt.Sprintf("%s / %s", nickname, id)
 }
 
 func (m *ValidationManager) getRecordingConfigForStreamer(screenID string) RecordingConfig {
@@ -519,7 +436,7 @@ func (m *ValidationManager) SetMonitoring(screenID string, monitoring bool) {
 			m.startWorkerMonitor(screenID)
 			return
 		}
-		go m.checkAndRecord(screenID)
+		go m.checkAndRecordImmediate(screenID)
 		return
 	}
 
@@ -594,11 +511,20 @@ func (m *ValidationManager) RemoveStreamer(screenID string) error {
 	m.workerReloads.Delete(screenID)
 	m.restrictedLives.Delete(screenID)
 	m.restrictedChecks.Delete(screenID)
+	m.checkFailures.Delete(screenID)
 	m.streamerSettings.Delete(screenID)
 	return nil
 }
 
 func (m *ValidationManager) checkAndRecord(screenID string) {
+	m.checkAndRecordWithOptions(screenID, false)
+}
+
+func (m *ValidationManager) checkAndRecordImmediate(screenID string) {
+	m.checkAndRecordWithOptions(screenID, true)
+}
+
+func (m *ValidationManager) checkAndRecordWithOptions(screenID string, immediate bool) {
 	if _, paused := m.pausedStreamers.Load(screenID); paused {
 		return
 	}
@@ -616,15 +542,39 @@ func (m *ValidationManager) checkAndRecord(screenID string) {
 
 	fmt.Printf("Checking status for %s...\n", screenID)
 	auth := m.getAuthConfigForStreamer(screenID)
+	if !immediate && isForcedCookieAuth(auth) && !m.waitForForcedCookieCheckSlot(screenID) {
+		return
+	}
 	info, err := checker.CheckStreamStatusWithAuth(screenID, auth.checkerOptions())
 	if err != nil {
 		fmt.Printf("Error checking %s: %v\n", screenID, err)
 		if m.notifier != nil {
+			if protected, ok := checker.AsProtectedLiveError(err); ok {
+				m.clearCheckFailure(screenID)
+				if m.suppressRestrictedLive(screenID, protected.LiveKey) {
+					m.notifier.NotifyStatus(screenID, "restricted", "受限直播：当前账号无观看权限")
+					m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Protected live detected; current account has no viewing permission. Further attempts are suppressed until this live ends", screenID))
+				}
+				return
+			}
+			loggedFailure := false
+			if isForcedCookieAuth(auth) && isTransientStatusCheckError(err) {
+				failures := m.recordCheckFailure(screenID)
+				m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Check live status failed: %v", screenID, err))
+				loggedFailure = true
+				if failures < forcedCookieCheckFailureThreshold {
+					m.notifier.NotifyStatus(screenID, "monitoring", fmt.Sprintf("状态检查暂时超时，等待重试 (%d/%d)", failures, forcedCookieCheckFailureThreshold))
+					return
+				}
+			}
 			m.notifier.NotifyStatus(screenID, "error", fmt.Sprintf("Error: %v", err))
-			m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Check live status failed: %v", screenID, err))
+			if !loggedFailure {
+				m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Check live status failed: %v", screenID, err))
+			}
 		}
 		return
 	}
+	m.clearCheckFailure(screenID)
 
 	if info.IsLive {
 		liveKey := checker.LiveSessionKey(info)
@@ -775,249 +725,6 @@ func (m *ValidationManager) confirmLiveBeforeRecording(screenID string, first *c
 	return second, ""
 }
 
-func (m *ValidationManager) startWorkerMonitor(screenID string) {
-	if strings.TrimSpace(screenID) == "" {
-		return
-	}
-	if _, paused := m.pausedStreamers.Load(screenID); paused {
-		return
-	}
-	if _, exists := m.workerHandles.Load(screenID); exists {
-		return
-	}
-
-	auth := m.getAuthConfigForStreamer(screenID)
-	recording := m.getRecordingConfigForStreamer(screenID)
-	checker.SetProxyURL(recording.proxyURL())
-	job := workerproc.Job{
-		Mode:                 "monitor",
-		ScreenID:             screenID,
-		OutputDir:            m.getOutputDirectory(),
-		CheckIntervalSeconds: recording.WorkerCheckIntervalSeconds,
-		Auth: workerproc.AuthSettings{
-			Mode:          auth.Mode,
-			AccessToken:   auth.AccessToken,
-			CookieEnabled: auth.CookieEnabled,
-			CookieFile:    auth.CookieFile,
-		},
-		Options: workerproc.RecordOptions{
-			QualityMode:          recording.QualityMode,
-			ContainerMode:        recording.ContainerMode,
-			SaveInfoText:         recording.SaveInfoText,
-			SaveCommentsText:     recording.SaveCommentsText,
-			SaveCommentsTextFile: recording.SaveCommentsTextFile,
-			CommentTextTemplate:  recording.CommentTextTemplate,
-			FFmpegPath:           recording.FFmpegPath,
-			FFprobePath:          recording.FFprobePath,
-			ProxyURL:             recording.proxyURL(),
-		},
-	}
-
-	manager := &workerproc.Manager{
-		WorkerPath: recording.WorkerPath,
-		OnEvent: func(evt workerproc.Event) {
-			m.handleWorkerEvent(screenID, evt)
-		},
-	}
-
-	handle, err := manager.Start(context.Background(), job)
-	if err != nil {
-		if m.notifier != nil {
-			m.notifier.NotifyStatus(screenID, "error", fmt.Sprintf("Worker start failed: %v", err))
-			m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Worker start failed: %v", screenID, err))
-		}
-		return
-	}
-
-	if _, loaded := m.workerHandles.LoadOrStore(screenID, handle); loaded {
-		_ = handle.Stop(2 * time.Second)
-		return
-	}
-
-	if m.notifier != nil {
-		m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Worker monitor process started", screenID))
-	}
-
-	go func() {
-		err := handle.Wait()
-		m.workerHandles.Delete(screenID)
-		m.activeRecordings.Delete(screenID)
-		if _, paused := m.pausedStreamers.Load(screenID); paused {
-			return
-		}
-		if err != nil {
-			if m.notifier != nil {
-				m.notifier.NotifyStatus(screenID, "error", fmt.Sprintf("Worker exited: %v", err))
-				m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Worker exited: %v", screenID, err))
-			}
-			m.scheduleWorkerRestart(screenID, err)
-			return
-		}
-		if m.notifier != nil {
-			m.notifier.NotifyStatus(screenID, "monitoring", "Worker monitor stopped")
-			m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Worker monitor stopped", screenID))
-		}
-		m.scheduleWorkerRestart(screenID, nil)
-	}()
-}
-
-func (m *ValidationManager) stopWorkerMonitor(screenID string) {
-	value, ok := m.workerHandles.LoadAndDelete(screenID)
-	if !ok {
-		return
-	}
-	handle, ok := value.(*workerproc.Handle)
-	if !ok {
-		return
-	}
-	if err := handle.Stop(10 * time.Second); err != nil && m.notifier != nil {
-		m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Stop worker failed: %v", screenID, err))
-	}
-	m.activeRecordings.Delete(screenID)
-	m.workerRestarts.Delete(screenID)
-}
-
-func (m *ValidationManager) scheduleWorkerRestart(screenID string, exitErr error) {
-	if _, paused := m.pausedStreamers.Load(screenID); paused {
-		return
-	}
-	if !m.getRecordingConfig().WorkerEnabled {
-		return
-	}
-	if _, exists := m.workerHandles.Load(screenID); exists {
-		return
-	}
-
-	attempt := 0
-	if value, ok := m.workerRestarts.Load(screenID); ok {
-		if n, okCast := value.(int); okCast {
-			attempt = n
-		}
-	}
-	recording := m.getRecordingConfig()
-	if recording.WorkerMaxRestarts > 0 && attempt >= recording.WorkerMaxRestarts {
-		m.pausedStreamers.Store(screenID, true)
-		m.workerRestarts.Delete(screenID)
-		if m.notifier != nil {
-			m.notifier.NotifyStatus(screenID, "error", fmt.Sprintf("Worker stopped after %d failed restarts", attempt))
-			m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Worker restart fuse opened after %d failed restarts", screenID, attempt))
-		}
-		return
-	}
-
-	delay := 5 * time.Second
-	switch {
-	case attempt >= 6:
-		delay = 60 * time.Second
-	case attempt >= 3:
-		delay = 30 * time.Second
-	case attempt >= 1:
-		delay = 15 * time.Second
-	}
-	m.workerRestarts.Store(screenID, attempt+1)
-
-	if m.notifier != nil {
-		reason := "worker exited"
-		if exitErr != nil {
-			reason = exitErr.Error()
-		}
-		m.notifier.NotifyStatus(screenID, "monitoring", fmt.Sprintf("Worker restarting in %s", delay))
-		m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Worker restart scheduled in %s (%s)", screenID, delay, reason))
-	}
-
-	go func() {
-		time.Sleep(delay)
-		if _, paused := m.pausedStreamers.Load(screenID); paused {
-			return
-		}
-		if _, exists := m.workerHandles.Load(screenID); exists {
-			return
-		}
-		m.startWorkerMonitor(screenID)
-	}()
-}
-
-func (m *ValidationManager) handleWorkerEvent(fallbackScreenID string, evt workerproc.Event) {
-	screenID := strings.TrimSpace(evt.ScreenID)
-	if screenID == "" {
-		screenID = fallbackScreenID
-	}
-	_, paused := m.pausedStreamers.Load(screenID)
-	if paused && evt.Type != "result" {
-		return
-	}
-
-	switch evt.Type {
-	case "start":
-		if m.notifier != nil {
-			message := evt.Message
-			if message == "" {
-				message = "Worker started"
-			}
-			m.notifier.NotifyAppLog(fmt.Sprintf("[%s] %s", screenID, message))
-		}
-	case "status":
-		if evt.Status == "recording" {
-			_, alreadyRecording := m.activeRecordings.Load(screenID)
-			m.activeRecordings.Store(screenID, true)
-			m.workerRestarts.Delete(screenID)
-			if !alreadyRecording {
-				m.sendRecordingNotification("start", screenID, m.recordingStartMessage(screenID, ""))
-			}
-		} else if evt.Status != "" {
-			m.activeRecordings.Delete(screenID)
-		}
-		if m.notifier != nil {
-			m.notifier.NotifyStatus(screenID, evt.Status, evt.Message)
-		}
-	case "log":
-		if m.notifier != nil && strings.TrimSpace(evt.Message) != "" {
-			m.notifier.NotifyAppLog(evt.Message)
-		}
-	case "result":
-		m.activeRecordings.Delete(screenID)
-		if evt.Error == "" && !evt.StoppedByUser {
-			m.workerRestarts.Delete(screenID)
-		}
-		if evt.FilePath != "" && m.notifier != nil && (evt.FileSize > 0 || evt.StoppedByUser) {
-			recErr := error(nil)
-			if evt.Error != "" {
-				recErr = fmt.Errorf("%s", evt.Error)
-			}
-			historyStatus := classifyRecordingStatus(evt.Duration, evt.FileSize, evt.StoppedByUser, recErr, m.getRecordingConfigForStreamer(screenID))
-			m.notifier.AddRecordingHistoryWithStatus(screenID, evt.FilePath, evt.Duration, evt.FileSize, historyStatus)
-		}
-		if evt.Error != "" && !evt.StoppedByUser && m.notifier != nil {
-			if !paused {
-				m.notifier.NotifyStatus(screenID, "error", fmt.Sprintf("Recording failed: %v", evt.Error))
-				m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Recording failed: %v", screenID, evt.Error))
-			}
-		}
-		if paused {
-			return
-		}
-		if evt.Error != "" && !evt.StoppedByUser {
-			m.sendRecordingNotification("error", screenID, m.recordingErrorMessage(screenID, "", evt.Error))
-		} else if evt.Error == "" && !evt.StoppedByUser {
-			m.sendRecordingNotification("finish", screenID, m.recordingFinishMessage(screenID, "", evt.Duration, evt.FilePath, evt.FileSize))
-		}
-	case "error":
-		if m.notifier != nil {
-			m.notifier.NotifyStatus(screenID, "error", evt.Error)
-			m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Worker error: %s", screenID, evt.Error))
-		}
-		m.sendRecordingNotification("error", screenID, m.workerErrorMessage(screenID, evt.Error))
-	default:
-		if m.notifier != nil {
-			data := strings.TrimSpace(evt.Message)
-			if data == "" {
-				data = fmt.Sprintf("Worker event: %s", evt.Type)
-			}
-			m.notifier.NotifyAppLog(fmt.Sprintf("[%s] %s", screenID, data))
-		}
-	}
-}
-
 func (m *ValidationManager) sendRecordingNotification(kind, screenID, message string) {
 	if !m.telegramEnabledForStreamer(screenID) {
 		return
@@ -1051,142 +758,4 @@ func (m *ValidationManager) sendRecordingNotification(kind, screenID, message st
 			m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Telegram push failed: %v", screenID, err))
 		}
 	}()
-}
-
-func (m *ValidationManager) recordingStartMessage(screenID, title string) string {
-	displayName := m.streamerDisplayName(screenID)
-	lines := []string{
-		fmt.Sprintf("%s 开始直播，并已开始录制", displayName),
-		fmt.Sprintf("主播: %s", displayName),
-	}
-	if strings.TrimSpace(title) != "" {
-		lines = append(lines, fmt.Sprintf("标题: %s", strings.TrimSpace(title)))
-	}
-	lines = append(lines, "时间: "+time.Now().Format("2006-01-02 15:04:05"))
-	return strings.Join(lines, "\n")
-}
-
-func (m *ValidationManager) recordingFinishMessage(screenID, title, duration, filePath string, fileSize int64) string {
-	lines := []string{
-		"TwitCasting 录制完成",
-		fmt.Sprintf("主播: %s", m.streamerDisplayName(screenID)),
-	}
-	if strings.TrimSpace(title) != "" {
-		lines = append(lines, fmt.Sprintf("标题: %s", strings.TrimSpace(title)))
-	}
-	if strings.TrimSpace(duration) != "" {
-		lines = append(lines, "时长: "+strings.TrimSpace(duration))
-	}
-	if fileSize > 0 {
-		lines = append(lines, "大小: "+formatBytes(fileSize))
-	}
-	if strings.TrimSpace(filePath) != "" {
-		lines = append(lines, "文件: "+filepath.Base(filePath))
-	}
-	return strings.Join(lines, "\n")
-}
-
-func (m *ValidationManager) recordingErrorMessage(screenID, title, errMessage string) string {
-	lines := []string{
-		"TwitCasting 录制失败",
-		fmt.Sprintf("主播: %s", m.streamerDisplayName(screenID)),
-	}
-	if strings.TrimSpace(title) != "" {
-		lines = append(lines, fmt.Sprintf("标题: %s", strings.TrimSpace(title)))
-	}
-	lines = append(lines,
-		"错误: "+strings.TrimSpace(errMessage),
-		"时间: "+time.Now().Format("2006-01-02 15:04:05"),
-	)
-	return strings.Join(lines, "\n")
-}
-
-func (m *ValidationManager) workerErrorMessage(screenID, errMessage string) string {
-	return strings.Join([]string{
-		"TwitCasting Worker 异常",
-		fmt.Sprintf("主播: %s", m.streamerDisplayName(screenID)),
-		"错误: " + strings.TrimSpace(errMessage),
-		"时间: " + time.Now().Format("2006-01-02 15:04:05"),
-	}, "\n")
-}
-
-func formatBytes(bytes int64) string {
-	if bytes <= 0 {
-		return "0 B"
-	}
-	units := []string{"B", "KB", "MB", "GB", "TB"}
-	value := float64(bytes)
-	unit := 0
-	for value >= 1024 && unit < len(units)-1 {
-		value /= 1024
-		unit++
-	}
-	if unit == 0 {
-		return fmt.Sprintf("%d %s", bytes, units[unit])
-	}
-	return fmt.Sprintf("%.2f %s", value, units[unit])
-}
-
-func classifyRecordingStatus(duration string, fileSize int64, stoppedByUser bool, recErr error, rc RecordingConfig) string {
-	if stoppedByUser {
-		return "manual_stopped"
-	}
-	if recErr != nil {
-		if isShortRecording(duration, fileSize, rc) {
-			return "failed_short"
-		}
-		return "failed_" + classifyErrorCategory(recErr.Error())
-	}
-	if isShortRecording(duration, fileSize, rc) {
-		return "short"
-	}
-	return "completed"
-}
-
-func isShortRecording(duration string, fileSize int64, rc RecordingConfig) bool {
-	if rc.MinFileSizeMB > 0 && fileSize > 0 && fileSize < int64(rc.MinFileSizeMB)*1024*1024 {
-		return true
-	}
-	if rc.MinDurationSeconds > 0 {
-		seconds := parseDurationSeconds(duration)
-		if seconds > 0 && seconds < rc.MinDurationSeconds {
-			return true
-		}
-	}
-	return false
-}
-
-func parseDurationSeconds(duration string) int {
-	parts := strings.Split(strings.TrimSpace(duration), ":")
-	if len(parts) != 3 {
-		return 0
-	}
-	var h, m, s int
-	if _, err := fmt.Sscanf(duration, "%d:%d:%d", &h, &m, &s); err != nil {
-		return 0
-	}
-	if h < 0 || m < 0 || s < 0 {
-		return 0
-	}
-	return h*3600 + m*60 + s
-}
-
-func classifyErrorCategory(message string) string {
-	lower := strings.ToLower(message)
-	switch {
-	case strings.Contains(lower, "unauthorized"), strings.Contains(lower, "forbidden"), strings.Contains(lower, "403"), strings.Contains(lower, "protected"), strings.Contains(lower, "login-required"), strings.Contains(lower, "login required"):
-		return "auth"
-	case strings.Contains(lower, "proxy"), strings.Contains(lower, "socks"), strings.Contains(lower, "connection refused"):
-		return "proxy"
-	case strings.Contains(lower, "media progress stalled"), strings.Contains(lower, "timeout"), strings.Contains(lower, "i/o timeout"), strings.Contains(lower, "network"), strings.Contains(lower, "connection reset"), strings.Contains(lower, "connection to "), strings.Contains(lower, "connection failed"), strings.Contains(lower, "input/output error"), strings.Contains(lower, "end of file"), strings.Contains(lower, "no such host"), strings.Contains(lower, "503"), strings.Contains(lower, "429"):
-		return "network"
-	case strings.Contains(lower, "stream url is empty"), strings.Contains(lower, "no stream url"), strings.Contains(lower, "m3u8"):
-		return "stream"
-	case strings.Contains(lower, "permission"), strings.Contains(lower, "access is denied"), strings.Contains(lower, "mkdir"), strings.Contains(lower, "write"):
-		return "file"
-	case strings.Contains(lower, "ffmpeg"), strings.Contains(lower, "exit status"), strings.Contains(lower, "invalid data"):
-		return "ffmpeg"
-	default:
-		return "unknown"
-	}
 }

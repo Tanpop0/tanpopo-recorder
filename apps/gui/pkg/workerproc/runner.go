@@ -211,6 +211,27 @@ func runMonitorJob(job *Job, notifier *stdoutNotifier, stopCh <-chan struct{}) E
 			CookieFile:    job.Auth.CookieFile,
 		})
 		if err != nil {
+			if protected, ok := checker.AsProtectedLiveError(err); ok {
+				liveKey := strings.TrimSpace(protected.LiveKey)
+				if liveKey == "" {
+					liveKey = "current-live"
+				}
+				if restrictedLiveKey != "" && checker.SameLiveSessionForSuppression(restrictedLiveKey, liveKey) {
+					if waitOrStop(interval, stopCh) {
+						return Event{Type: "result", ScreenID: job.ScreenID, StoppedByUser: true}
+					}
+					continue
+				}
+				restrictedLiveKey = liveKey
+				restrictedFailureKey = ""
+				restrictedFailureCount = 0
+				notifier.NotifyStatus(job.ScreenID, "restricted", "受限直播：当前账号无观看权限")
+				notifier.NotifyAppLog(fmt.Sprintf("[%s] Protected live detected; current account has no viewing permission. Further attempts are suppressed until this live ends", job.ScreenID))
+				if waitOrStop(interval, stopCh) {
+					return Event{Type: "result", ScreenID: job.ScreenID, StoppedByUser: true}
+				}
+				continue
+			}
 			notifier.NotifyAppLog(fmt.Sprintf("[%s] Worker check failed: %v", job.ScreenID, err))
 			if waitOrStop(interval, stopCh) {
 				return Event{Type: "result", ScreenID: job.ScreenID, StoppedByUser: true}

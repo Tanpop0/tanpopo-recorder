@@ -106,6 +106,40 @@ func TestGetAuthConfigForStreamerDisablesCookie(t *testing.T) {
 	}
 }
 
+func TestTransientStatusCheckErrorClassification(t *testing.T) {
+	if !isTransientStatusCheckError(fmt.Errorf("request failed: context deadline exceeded (Client.Timeout exceeded while awaiting headers)")) {
+		t.Fatal("timeout status check error was not classified as transient")
+	}
+	if isTransientStatusCheckError(fmt.Errorf("api returned status: 403")) {
+		t.Fatal("authorization status check error was classified as transient")
+	}
+}
+
+func TestForcedCookieStatusCheckJitterIsStableAndBounded(t *testing.T) {
+	first := forcedCookieStatusCheckJitter("soranokohane")
+	second := forcedCookieStatusCheckJitter("soranokohane")
+	if first != second {
+		t.Fatalf("forcedCookieStatusCheckJitter is not stable: %s != %s", first, second)
+	}
+	if first < 0 || first >= forcedCookieStatusCheckJitterLimit {
+		t.Fatalf("forcedCookieStatusCheckJitter = %s, want within [0, %s)", first, forcedCookieStatusCheckJitterLimit)
+	}
+}
+
+func TestCheckFailureCounterCanBeCleared(t *testing.T) {
+	manager := NewManager(nil, nil)
+	if got := manager.recordCheckFailure("cookie_user"); got != 1 {
+		t.Fatalf("first recordCheckFailure() = %d, want 1", got)
+	}
+	if got := manager.recordCheckFailure("cookie_user"); got != 2 {
+		t.Fatalf("second recordCheckFailure() = %d, want 2", got)
+	}
+	manager.clearCheckFailure("cookie_user")
+	if got := manager.recordCheckFailure("cookie_user"); got != 1 {
+		t.Fatalf("recordCheckFailure() after clear = %d, want 1", got)
+	}
+}
+
 func TestRecordRestrictedFailureSuppressesAfterTwoAttempts(t *testing.T) {
 	manager := NewManager(nil, nil)
 	if got := manager.recordRestrictedFailure("member_user", "movie:1"); got != 1 {
@@ -125,6 +159,22 @@ func TestRecordRestrictedFailureSuppressesAfterTwoAttempts(t *testing.T) {
 	}
 	if manager.isRestrictedLive("member_user", "movie:2") {
 		t.Fatal("new explicit movie session was incorrectly suppressed")
+	}
+}
+
+func TestSuppressRestrictedLiveOnlyReportsNewSession(t *testing.T) {
+	manager := NewManager(nil, nil)
+	if !manager.suppressRestrictedLive("protected_user", "movie:1") {
+		t.Fatal("first suppressRestrictedLive() = false, want true")
+	}
+	if manager.suppressRestrictedLive("protected_user", "movie:1") {
+		t.Fatal("same live suppressRestrictedLive() = true, want false")
+	}
+	if manager.suppressRestrictedLive("protected_user", "created:2") {
+		t.Fatal("weak live key suppressRestrictedLive() = true, want false")
+	}
+	if !manager.suppressRestrictedLive("protected_user", "movie:2") {
+		t.Fatal("new movie suppressRestrictedLive() = false, want true")
 	}
 }
 

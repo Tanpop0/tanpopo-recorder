@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/user/twitcasting-recorder/apps/gui/pkg/config"
+	"github.com/user/twitcasting-recorder/apps/gui/pkg/paths"
 	"github.com/user/twitcasting-recorder/apps/gui/pkg/scheduler"
 )
 
@@ -50,7 +51,7 @@ func runWeb(args []string) error {
 	fs := flagSet("web")
 	flags := &globalFlags{}
 	addr := fs.String("addr", "127.0.0.1:8787", "web panel listen address")
-	fs.StringVar(&flags.configPath, "config", "config.yaml", "path to config yaml")
+	fs.StringVar(&flags.configPath, "config", paths.DefaultConfigPath(), "path to config yaml")
 	fs.StringVar(&flags.logFile, "log-file", "", "path to CLI log file; default is <output>/logs/cli.log")
 	fs.BoolVar(&flags.verbose, "verbose", false, "print verbose status logs")
 	if err := fs.Parse(args); err != nil {

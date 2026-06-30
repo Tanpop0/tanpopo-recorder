@@ -19,6 +19,7 @@ import (
 	"github.com/user/twitcasting-recorder/apps/gui/pkg/config"
 	"github.com/user/twitcasting-recorder/apps/gui/pkg/history"
 	"github.com/user/twitcasting-recorder/apps/gui/pkg/notify"
+	"github.com/user/twitcasting-recorder/apps/gui/pkg/paths"
 	"github.com/user/twitcasting-recorder/apps/gui/pkg/recorder"
 	"github.com/user/twitcasting-recorder/apps/gui/pkg/scheduler"
 )
@@ -91,7 +92,7 @@ func parseGlobalFlags(name string, args []string) (*globalFlags, []string, error
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	flags := &globalFlags{}
-	fs.StringVar(&flags.configPath, "config", "config.yaml", "path to config yaml")
+	fs.StringVar(&flags.configPath, "config", paths.DefaultConfigPath(), "path to config yaml")
 	fs.StringVar(&flags.logFile, "log-file", "", "path to CLI log file; default is <output>/logs/cli.log")
 	fs.BoolVar(&flags.verbose, "verbose", false, "print verbose status logs")
 	if err := fs.Parse(args); err != nil {
@@ -251,6 +252,13 @@ func runDoctor(args []string) error {
 
 	fmt.Printf("twitrec %s\n", version)
 	fmt.Printf("config: %s\n", flags.configPath)
+	fmt.Printf("history: %s\n", paths.HistoryPath(flags.configPath))
+	fmt.Printf("logs: %s\n", paths.LogsDir(cfg.OutputDirectory))
+	logFile := strings.TrimSpace(flags.logFile)
+	if logFile == "" {
+		logFile = paths.CLILogPath(cfg.OutputDirectory)
+	}
+	fmt.Printf("log file: %s\n", logFile)
 	fmt.Printf("output: %s\n", cfg.OutputDirectory)
 	if err := os.MkdirAll(cfg.OutputDirectory, 0755); err != nil {
 		fmt.Printf("[error] output directory: %v\n", err)
@@ -316,14 +324,10 @@ func runAuth(args []string) error {
 func newCLINotifier(cfg *config.Config, flags *globalFlags) *cliNotifier {
 	logFile := strings.TrimSpace(flags.logFile)
 	if logFile == "" {
-		logFile = filepath.Join(cfg.OutputDirectory, "logs", "cli.log")
-	}
-	historyPath := "history.json"
-	if dir := filepath.Dir(flags.configPath); dir != "." && dir != "" {
-		historyPath = filepath.Join(dir, "history.json")
+		logFile = paths.CLILogPath(cfg.OutputDirectory)
 	}
 	return &cliNotifier{
-		history:  history.NewHistoryManager(historyPath),
+		history:  history.NewHistoryManager(paths.HistoryPath(flags.configPath)),
 		logFile:  logFile,
 		verbose:  flags.verbose,
 		statuses: make(map[string]cliStatus),

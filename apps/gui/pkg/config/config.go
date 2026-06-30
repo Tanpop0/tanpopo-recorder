@@ -2,7 +2,10 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/user/twitcasting-recorder/apps/gui/pkg/paths"
 
 	"gopkg.in/yaml.v3"
 )
@@ -112,7 +115,7 @@ func applyDefaults(cfg *Config) {
 	}
 
 	if cfg.Cookies.FilePath == "" {
-		cfg.Cookies.FilePath = "cookies.txt"
+		cfg.Cookies.FilePath = paths.DefaultCookiesPath()
 	}
 
 	qualityMode := strings.ToLower(strings.TrimSpace(cfg.Recording.QualityMode))
@@ -257,6 +260,11 @@ func SaveConfig(path string, cfg *Config) error {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err
+	}
+	if dir := filepath.Dir(strings.TrimSpace(path)); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return err
+		}
 	}
 	return os.WriteFile(path, data, 0644)
 }

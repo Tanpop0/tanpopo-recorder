@@ -2,6 +2,7 @@ package checker
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -25,6 +26,27 @@ type StreamInfo struct {
 	StreamURL  string
 	MovieID    string
 	Created    int64
+}
+
+// ProtectedLiveError reports a live that exists but cannot be watched by the
+// current account/auth context.
+type ProtectedLiveError struct {
+	ScreenID string
+	Title    string
+	LiveKey  string
+}
+
+func (e *ProtectedLiveError) Error() string {
+	return "current live is protected (is_protected=true)"
+}
+
+// AsProtectedLiveError extracts protected-live metadata from an error.
+func AsProtectedLiveError(err error) (*ProtectedLiveError, bool) {
+	var protected *ProtectedLiveError
+	if errors.As(err, &protected) {
+		return protected, true
+	}
+	return nil, false
 }
 
 // LiveSessionKey identifies one live session well enough to suppress repeated
@@ -181,7 +203,15 @@ func checkViaOAuthCurrentLive(screenID, accessToken string) (*StreamInfo, bool, 
 		return &StreamInfo{IsLive: false, StreamerID: screenID}, true, nil
 	}
 	if payload.Movie.IsProtected {
-		return nil, true, fmt.Errorf("current live is protected (is_protected=true)")
+		liveKey := LiveSessionKey(&StreamInfo{
+			MovieID: stringifyID(payload.Movie.ID),
+			Created: payload.Movie.Created,
+		})
+		return nil, true, &ProtectedLiveError{
+			ScreenID: screenID,
+			Title:    strings.TrimSpace(payload.Movie.Title),
+			LiveKey:  liveKey,
+		}
 	}
 
 	title := strings.TrimSpace(payload.Movie.Title)
@@ -226,11 +256,15 @@ func checkViaLegacyStreamServer(screenID, accessToken, cookie string) (*StreamIn
 		req.Header.Set("Cookie", cookie)
 	}
 
-	client := newHTTPClient(10 * time.Second)
+	timeout := 10 * time.Second
+	if strings.TrimSpace(cookie) != "" {
+		timeout = 20 * time.Second
+	}
+	client := newHTTPClient(timeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		if isTimeoutError(err) {
-			time.Sleep(800 * time.Millisecond)
+			time.Sleep(1200 * time.Millisecond)
 			resp, err = client.Do(req.Clone(req.Context()))
 		}
 	}

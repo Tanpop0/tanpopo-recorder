@@ -33,155 +33,40 @@
     <el-tabs v-model="currentTab" class="dashboard-tabs">
       <el-tab-pane label="监控" name="dashboard" class="dashboard-pane">
         <div class="monitor-layout">
-          <section class="task-panel">
-            <div class="task-toolbar">
-              <el-input v-model="searchQuery" placeholder="搜索主播 ID" clearable />
-              <el-button icon="Refresh" :loading="refreshLoading" @click="refreshList">刷新</el-button>
-            </div>
+          <StreamerTaskPanel
+            v-model:search-query="searchQuery"
+            :streamers="filterStreamers"
+            :selected-id="selectedID"
+            :refresh-loading="refreshLoading"
+            :bulk-state="bulkState"
+            :status-text="getStatusText"
+            :realtime-message="renderRealtimeMessage"
+            :short-time="formatShortTime"
+            :is-busy="isStreamerBusy"
+            @refresh="refreshList"
+            @select="selectStreamer"
+            @toggle-monitoring="setMonitoringByRow"
+            @open-details="openDetails"
+          />
 
-            <div v-if="bulkState.active || bulkState.done > 0" class="queue-banner" :class="{ done: !bulkState.active }">
-              <div>
-                <strong>{{ bulkState.title }}</strong>
-                <span>{{ bulkState.message }}</span>
-              </div>
-              <div class="queue-progress">
-                {{ bulkState.done }} / {{ bulkState.total }}
-              </div>
-            </div>
-
-            <div class="task-list">
-              <button
-                v-for="streamer in filterStreamers"
-                :key="streamer.screen_id"
-                class="streamer-row"
-                :class="{ active: selectedID === streamer.screen_id, recording: streamer.current_status === 'recording', 'has-error': streamer.lastError || streamer.consecutiveFailures > 0 }"
-                type="button"
-                @click="selectStreamer(streamer)"
-              >
-                <el-avatar :size="42" :src="streamer.avatar || 'https://twitcasting.tv/img/user_default.png'" />
-                <div class="streamer-main">
-                  <div class="streamer-title-line">
-                    <span class="streamer-id">{{ streamer.screen_id }}</span>
-                    <span class="status-pill" :class="streamer.current_status">
-                      <span class="status-dot"></span>{{ getStatusText(streamer.current_status) }}
-                    </span>
-                  </div>
-                  <div class="streamer-subtitle">{{ streamer.nickname || '未获取昵称' }}</div>
-                  <div class="streamer-message">{{ renderRealtimeMessage(streamer) }}</div>
-                  <div class="streamer-meta">
-                    <span>更新 {{ formatShortTime(streamer.lastCheckAt) }}</span>
-                    <span v-if="streamer.consecutiveFailures > 0" class="danger-meta">异常 {{ streamer.consecutiveFailures }} 次</span>
-                    <span v-else-if="streamer.lastSuccessAt">成功 {{ formatShortTime(streamer.lastSuccessAt) }}</span>
-                  </div>
-                </div>
-                <div class="row-actions" @click.stop>
-                  <el-button
-                    size="small"
-                    :type="streamer.current_status === 'idle' ? 'success' : 'warning'"
-                    :loading="isStreamerBusy(streamer.screen_id)"
-                    :disabled="bulkState.active"
-                    @click="setMonitoringByRow(streamer)"
-                  >
-                    {{ streamer.current_status === 'idle' ? '开始' : '暂停' }}
-                  </el-button>
-                  <el-button size="small" @click="openDetails(streamer)">详情</el-button>
-                </div>
-              </button>
-              <div v-if="filterStreamers.length === 0" class="empty-state">暂无匹配主播</div>
-            </div>
-          </section>
-
-          <aside class="detail-panel">
-            <template v-if="selectedStreamer">
-              <div class="detail-head">
-                <el-avatar :size="52" :src="selectedStreamer.avatar || 'https://twitcasting.tv/img/user_default.png'" />
-                <div>
-                  <h2>{{ selectedStreamer.nickname || selectedStreamer.screen_id }}</h2>
-                  <p>{{ selectedStreamer.screen_id }}</p>
-                </div>
-                <span class="status-pill large" :class="selectedStreamer.current_status">
-                  <span class="status-dot"></span>{{ getStatusText(selectedStreamer.current_status) }}
-                </span>
-              </div>
-
-              <div class="detail-stats">
-                <div v-for="item in detailStatItems(selectedStreamer)" :key="item.key">
-                  <span>{{ item.label }}</span>
-                  <strong>{{ item.value }}</strong>
-                </div>
-              </div>
-
-              <div class="detail-section policy-section">
-                <div class="section-label">单主播策略</div>
-                <div class="policy-control">
-                  <span>画质</span>
-                  <el-select
-                    :model-value="selectedStreamer.quality_mode || ''"
-                    size="small"
-                    @change="value => updateStreamerQualityMode(selectedStreamer, value)"
-                  >
-                    <el-option v-for="item in qualityModeOptions" :key="item.value" :label="item.label" :value="item.value" />
-                  </el-select>
-                </div>
-                <div class="policy-control">
-                  <span>鉴权</span>
-                  <el-select
-                    :model-value="selectedStreamer.auth_mode || ''"
-                    size="small"
-                    @change="value => updateStreamerAuthMode(selectedStreamer, value)"
-                  >
-                    <el-option v-for="item in authModeOptions" :key="item.value" :label="item.label" :value="item.value" />
-                  </el-select>
-                </div>
-                <div class="policy-control">
-                  <span>TG 推送</span>
-                  <el-switch
-                    :model-value="!!selectedStreamer.telegram_enabled"
-                    size="small"
-                    inline-prompt
-                    active-text="开"
-                    inactive-text="关"
-                    @change="value => updateStreamerTelegramEnabled(selectedStreamer, value)"
-                  />
-                </div>
-              </div>
-
-              <div class="detail-section">
-                <div class="section-label">当前状态</div>
-                <p>{{ renderRealtimeMessage(selectedStreamer) }}</p>
-              </div>
-
-              <div class="detail-section">
-                <div class="section-label">诊断</div>
-                <p>{{ renderDiagnosticsMessage(selectedStreamer) }}</p>
-              </div>
-
-              <div class="detail-actions">
-                <el-button size="small" @click="openLink(selectedStreamer.screen_id)">打开主页</el-button>
-                <el-button size="small" type="primary" plain @click="showStreamerHistory(selectedStreamer)">历史录播</el-button>
-                <el-button size="small" type="danger" plain @click="removeStreamer(selectedStreamer.screen_id)">删除主播</el-button>
-                <el-button
-                  size="small"
-                  :type="selectedStreamer.current_status === 'idle' ? 'success' : 'warning'"
-                  :loading="isStreamerBusy(selectedStreamer.screen_id)"
-                  :disabled="bulkState.active"
-                  @click="setMonitoringByRow(selectedStreamer)"
-                >
-                  {{ selectedStreamer.current_status === 'idle' ? '开始监听' : '暂停监听' }}
-                </el-button>
-              </div>
-
-              <div class="recent-log">
-                <div class="section-label">最近日志</div>
-                <div v-if="!selectedStreamer.recentLogs || selectedStreamer.recentLogs.length === 0" class="log-empty">暂无日志</div>
-                <div v-for="(line, index) in selectedStreamer.recentLogs.slice(0, 6)" :key="index" class="log-line">{{ line }}</div>
-              </div>
-            </template>
-            <div v-else class="detail-empty">
-              <h2>选择一个主播</h2>
-              <p>在左侧任务列表中选择主播后，这里会显示录制状态、诊断和最近日志。</p>
-            </div>
-          </aside>
+          <StreamerSidePanel
+            :streamer="selectedStreamer"
+            :status-text="getStatusText"
+            :stat-items="detailStatItems"
+            :realtime-message="renderRealtimeMessage"
+            :diagnostics-message="renderDiagnosticsMessage"
+            :auth-mode-options="authModeOptions"
+            :quality-mode-options="qualityModeOptions"
+            :is-busy="isStreamerBusy"
+            :bulk-active="bulkState.active"
+            @open-link="openLink"
+            @show-history="showStreamerHistory"
+            @remove="removeStreamer"
+            @toggle-monitoring="setMonitoringByRow"
+            @update-auth="updateStreamerAuthMode"
+            @update-quality="updateStreamerQualityMode"
+            @update-telegram="updateStreamerTelegramEnabled"
+          />
         </div>
       </el-tab-pane>
 
@@ -207,6 +92,8 @@ import RecordingHistory from './RecordingHistory.vue'
 import Settings from './Settings.vue'
 import OperationLog from './OperationLog.vue'
 import AddStreamerDialog from './AddStreamerDialog.vue'
+import StreamerTaskPanel from './StreamerTaskPanel.vue'
+import StreamerSidePanel from './StreamerSidePanel.vue'
 import StreamerDetailDialog from './StreamerDetailDialog.vue'
 import { GetStreamers, AddStreamer, RemoveStreamer, SetMonitoring, SetAllMonitoring, GetRecordingHistory, UpdateStreamerOptions } from '../../wailsjs/go/main/App'
 import { BrowserOpenURL, EventsOn } from '../../wailsjs/runtime'
@@ -1165,360 +1052,6 @@ onUnmounted(() => {
   height: 100%;
 }
 
-.task-panel,
-.detail-panel {
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: #ffffff;
-  min-height: 0;
-}
-
-.task-panel {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-}
-
-.task-toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  padding: 12px;
-  border-bottom: 1px solid #eef2f7;
-}
-
-.queue-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 12px;
-  border-bottom: 1px solid #dbeafe;
-  background: #eff6ff;
-  color: #1d4ed8;
-  font-size: 12px;
-}
-
-.queue-banner.done {
-  border-bottom-color: #dcfce7;
-  background: #f0fdf4;
-  color: #047857;
-}
-
-.queue-banner strong,
-.queue-banner span {
-  display: block;
-}
-
-.queue-banner span {
-  margin-top: 2px;
-  color: inherit;
-  opacity: 0.82;
-}
-
-.queue-progress {
-  flex: 0 0 auto;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.8);
-  padding: 4px 8px;
-  font-weight: 800;
-}
-
-.task-list {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 8px;
-}
-
-.streamer-row {
-  width: 100%;
-  min-height: 78px;
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: center;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  padding: 10px;
-  text-align: left;
-  cursor: pointer;
-  color: inherit;
-}
-
-.streamer-row:hover,
-.streamer-row.active {
-  background: #f8fafc;
-  border-color: #dbe3ed;
-}
-
-.streamer-row.recording {
-  border-color: #fecaca;
-  background: #fff7f7;
-}
-
-.streamer-row.has-error {
-  border-left-color: #f59e0b;
-  border-left-width: 4px;
-}
-
-.streamer-main {
-  min-width: 0;
-}
-
-.streamer-title-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.streamer-id {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #111827;
-  font-size: 14px;
-  font-weight: 800;
-}
-
-.streamer-subtitle {
-  margin-top: 3px;
-  color: #64748b;
-  font-size: 12px;
-}
-
-.streamer-message {
-  margin-top: 8px;
-  color: #475569;
-  font-size: 12px;
-  line-height: 1.45;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.streamer-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 5px;
-  color: #94a3b8;
-  font-size: 11px;
-}
-
-.streamer-meta .danger-meta {
-  color: #b45309;
-  font-weight: 700;
-}
-
-.row-actions {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  flex: 0 0 auto;
-}
-
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  flex: 0 0 auto;
-  height: 24px;
-  padding: 0 8px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 700;
-  color: #475569;
-  background: #f1f5f9;
-  white-space: nowrap;
-}
-
-.status-pill.large {
-  margin-left: auto;
-  max-width: 92px;
-  overflow: hidden;
-}
-
-.status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: #94a3b8;
-}
-
-.status-pill.recording {
-  color: #b91c1c;
-  background: #fef2f2;
-}
-
-.status-pill.recording .status-dot {
-  background: #ef4444;
-}
-
-.status-pill.monitoring {
-  color: #047857;
-  background: #ecfdf5;
-}
-
-.status-pill.monitoring .status-dot {
-  background: #10b981;
-}
-
-.status-pill.error {
-  color: #b45309;
-  background: #fffbeb;
-}
-
-.status-pill.error .status-dot {
-  background: #f59e0b;
-}
-
-.status-pill.restricted {
-  color: #7c3aed;
-  background: #f5f3ff;
-}
-
-.status-pill.restricted .status-dot {
-  background: #8b5cf6;
-}
-
-.detail-panel {
-  width: 360px;
-  box-sizing: border-box;
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  overflow: auto;
-  min-width: 0;
-}
-
-.detail-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.detail-head > div {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.detail-head h2 {
-  margin: 0;
-  color: #111827;
-  font-size: 16px;
-  line-height: 1.25;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.detail-head p {
-  margin: 3px 0 0;
-  color: #64748b;
-  font-size: 12px;
-}
-
-.detail-stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 14px;
-}
-
-.detail-stats div {
-  border: 1px solid #edf2f7;
-  border-radius: 8px;
-  padding: 8px;
-  min-width: 0;
-}
-
-.detail-stats span,
-.section-label {
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.detail-stats strong {
-  display: block;
-  margin-top: 5px;
-  color: #111827;
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-
-.detail-section {
-  margin-top: 14px;
-}
-
-.policy-section {
-  border-top: 1px solid #eef2f7;
-  padding-top: 12px;
-}
-
-.policy-control {
-  display: grid;
-  grid-template-columns: 46px minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.policy-control > span {
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.detail-section p {
-  margin: 7px 0 0;
-  color: #334155;
-  font-size: 13px;
-  line-height: 1.55;
-  overflow-wrap: anywhere;
-}
-
-.detail-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 14px;
-}
-
-.detail-actions :deep(.el-button) {
-  width: 100%;
-  margin-left: 0;
-}
-
-.recent-log {
-  margin-top: 16px;
-  border-top: 1px solid #eef2f7;
-  padding-top: 12px;
-}
-
-.log-line,
-.log-empty {
-  margin-top: 6px;
-  color: #475569;
-  font-family: Consolas, Monaco, monospace;
-  font-size: 12px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.empty-state,
-.detail-empty {
-  color: #64748b;
-  padding: 24px;
-  text-align: center;
-}
-
 .dashboard-tabs {
   flex: 1 1 auto;
   min-height: 0;
@@ -1570,14 +1103,6 @@ onUnmounted(() => {
     grid-template-columns: 1fr;
   }
 
-  .detail-panel {
-    width: auto;
-    max-height: 360px;
-  }
-
-  .status-pill.large {
-    max-width: none;
-  }
 }
 
 </style>

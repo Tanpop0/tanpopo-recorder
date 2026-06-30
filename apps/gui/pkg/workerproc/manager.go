@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/user/twitcasting-recorder/apps/gui/pkg/paths"
 )
 
 type EventHandler func(Event)
@@ -187,7 +189,7 @@ func normalizeJob(job Job) Job {
 		job.Auth.Mode = "auto"
 	}
 	if strings.TrimSpace(job.Auth.CookieFile) == "" {
-		job.Auth.CookieFile = "cookies.txt"
+		job.Auth.CookieFile = paths.DefaultCookiesPath()
 	}
 	if strings.TrimSpace(job.Options.QualityMode) == "" {
 		job.Options.QualityMode = "stable"
