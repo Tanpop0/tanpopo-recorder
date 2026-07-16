@@ -84,6 +84,25 @@ func (m *ValidationManager) clearCheckFailure(screenID string) {
 	m.checkFailures.Delete(screenID)
 }
 
+func (m *ValidationManager) retryRecordingAfterDelay(screenID string, delay time.Duration) {
+	go func() {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		<-timer.C
+
+		if !m.IsMonitoring(screenID) {
+			return
+		}
+		if _, recording := m.activeRecordings.Load(screenID); recording {
+			return
+		}
+		if m.getRecordingConfigForStreamer(screenID).WorkerEnabled {
+			return
+		}
+		m.checkAndRecordImmediate(screenID)
+	}()
+}
+
 func (m *ValidationManager) isRestrictedLive(screenID, liveKey string) bool {
 	value, ok := m.restrictedLives.Load(screenID)
 	if !ok {

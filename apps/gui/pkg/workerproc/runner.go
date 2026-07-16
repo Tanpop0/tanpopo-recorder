@@ -341,6 +341,15 @@ func runMonitorJob(job *Job, notifier *stdoutNotifier, stopCh <-chan struct{}) E
 		restrictedFailureCount = 0
 		notifier.emit(result)
 		if result.Error != "" && !result.StoppedByUser {
+			if recorder.IsMediaProgressStallError(errorFromString(result.Error)) {
+				notifier.NotifyStatus(job.ScreenID, "monitoring", "媒体进度异常，10 秒后重新连接...")
+				notifier.NotifyAppLog(fmt.Sprintf("[%s] Media progress watchdog stopped the recorder; resolving a fresh live URL in 10s", job.ScreenID))
+				if waitOrStop(10*time.Second, stopCh) {
+					result.StoppedByUser = true
+					return result
+				}
+				continue
+			}
 			notifier.NotifyAppLog(fmt.Sprintf("[%s] Worker recording failed: %s", job.ScreenID, result.Error))
 			if waitOrStop(3*time.Second, stopCh) {
 				result.StoppedByUser = true

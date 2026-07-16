@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/user/twitcasting-recorder/apps/gui/pkg/checker"
+	"github.com/user/twitcasting-recorder/apps/gui/pkg/recorder"
 	"github.com/user/twitcasting-recorder/apps/gui/pkg/workerproc"
 )
 
@@ -211,6 +212,7 @@ func (m *ValidationManager) handleWorkerEvent(fallbackScreenID string, evt worke
 		}
 	case "result":
 		m.activeRecordings.Delete(screenID)
+		mediaProgressStall := evt.Error != "" && recorder.IsMediaProgressStallError(fmt.Errorf("%s", evt.Error))
 		if evt.Error == "" && !evt.StoppedByUser {
 			m.workerRestarts.Delete(screenID)
 		}
@@ -222,7 +224,12 @@ func (m *ValidationManager) handleWorkerEvent(fallbackScreenID string, evt worke
 			historyStatus := classifyRecordingStatus(evt.Duration, evt.FileSize, evt.StoppedByUser, recErr, m.getRecordingConfigForStreamer(screenID))
 			m.notifier.AddRecordingHistoryWithStatus(screenID, evt.FilePath, evt.Duration, evt.FileSize, historyStatus)
 		}
-		if evt.Error != "" && !evt.StoppedByUser && m.notifier != nil {
+		if mediaProgressStall && !evt.StoppedByUser && m.notifier != nil {
+			if !paused {
+				m.notifier.NotifyStatus(screenID, "monitoring", "媒体进度异常，正在重新连接...")
+				m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Recording segment stopped by media progress watchdog; worker will reconnect", screenID))
+			}
+		} else if evt.Error != "" && !evt.StoppedByUser && m.notifier != nil {
 			if !paused {
 				m.notifier.NotifyStatus(screenID, "error", fmt.Sprintf("Recording failed: %v", evt.Error))
 				m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Recording failed: %v", screenID, evt.Error))
@@ -231,7 +238,7 @@ func (m *ValidationManager) handleWorkerEvent(fallbackScreenID string, evt worke
 		if paused {
 			return
 		}
-		if evt.Error != "" && !evt.StoppedByUser {
+		if evt.Error != "" && !evt.StoppedByUser && !mediaProgressStall {
 			m.sendRecordingNotification("error", screenID, m.recordingErrorMessage(screenID, "", evt.Error))
 		} else if evt.Error == "" && !evt.StoppedByUser {
 			m.sendRecordingNotification("finish", screenID, m.recordingFinishMessage(screenID, "", evt.Duration, evt.FilePath, evt.FileSize))

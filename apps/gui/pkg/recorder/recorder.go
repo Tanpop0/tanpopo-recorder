@@ -88,11 +88,6 @@ var (
 
 var hlsVariantPattern = regexp.MustCompile(`(/hls/)(\d+\.\d+)(/media(?:\.\d+)?\.m3u8)`)
 
-const (
-	startupNoMediaProgressTimeout = 2 * time.Minute
-	mediaProgressStallTimeout     = 3 * time.Minute
-)
-
 func toolExecutableNames(toolName string) []string {
 	if stdruntime.GOOS == "windows" {
 		return []string{toolName + ".exe", toolName}
@@ -854,23 +849,18 @@ func RecordLiveStreamWithOptions(streamerID, title, streamURL, outputDir string,
 	var restrictedErrMu sync.Mutex
 	var stallMu sync.Mutex
 	lastRestrictedAccessLine := ""
-	lastMediaTime := ""
-	lastMediaProgressAt := startTime
-	sawMediaProgress := false
+	mediaProgress := newMediaProgressMonitor(startTime)
 	stallReason := ""
 	timeRegex := regexp.MustCompile(`time=([0-9:.]+)`)
 	outTimeRegex := regexp.MustCompile(`out_time=([0-9:.]+)`)
 
 	notifyProgress := func(mediaTime string) {
-		mediaTime = normalizeMediaTime(mediaTime)
-		if mediaTime == "" || notifier == nil {
+		mediaTime, advanced := mediaProgress.Observe(mediaTime, time.Now())
+		if mediaTime == "" || !advanced || notifier == nil {
 			return
 		}
 
 		progressMu.Lock()
-		lastMediaTime = mediaTime
-		lastMediaProgressAt = time.Now()
-		sawMediaProgress = true
 		shouldNotify := time.Since(lastProgressUpdate) >= 1*time.Second
 		if shouldNotify {
 			lastProgressUpdate = time.Now()
@@ -956,17 +946,7 @@ func RecordLiveStreamWithOptions(streamerID, title, streamURL, outputDir string,
 					continue
 				}
 
-				progressMu.Lock()
-				progressSeen := sawMediaProgress
-				lastProgress := lastMediaProgressAt
-				progressMu.Unlock()
-
-				reason := ""
-				if !progressSeen && time.Since(startTime) >= startupNoMediaProgressTimeout {
-					reason = fmt.Sprintf("no media progress for %s after start", startupNoMediaProgressTimeout)
-				} else if progressSeen && time.Since(lastProgress) >= mediaProgressStallTimeout {
-					reason = fmt.Sprintf("media progress stalled for %s", mediaProgressStallTimeout)
-				}
+				reason := mediaProgress.StallReason(time.Now())
 				if reason == "" {
 					continue
 				}
@@ -1044,9 +1024,7 @@ func RecordLiveStreamWithOptions(streamerID, title, streamURL, outputDir string,
 		fileSize = info.Size()
 	}
 
-	progressMu.Lock()
-	capturedMediaTime := lastMediaTime
-	progressMu.Unlock()
+	capturedMediaTime := mediaProgress.LastMediaTime()
 
 	durationStr := elapsedStr
 	if media := normalizeMediaTime(capturedMediaTime); media != "" && media != "00:00:00" {

@@ -654,6 +654,15 @@ func (m *ValidationManager) checkAndRecordWithOptions(screenID string, immediate
 
 			if recErr != nil {
 				fmt.Printf("Recording error for %s: %v\n", sID, recErr)
+				if !stoppedByUser && recorder.IsMediaProgressStallError(recErr) {
+					recordingFailed = true
+					if m.notifier != nil {
+						m.notifier.NotifyStatus(sID, "monitoring", "媒体进度异常，10 秒后重新连接...")
+						m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Media progress watchdog stopped the recorder; resolving a fresh live URL in 10s", sID))
+					}
+					m.retryRecordingAfterDelay(sID, 10*time.Second)
+					return
+				}
 				if !stoppedByUser && isForcedCookieAuth(ac) && recorder.IsRestrictedAccessError(recErr) {
 					recordingFailed = true
 					attempt := m.recordRestrictedFailure(sID, sessionKey)
