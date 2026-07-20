@@ -2,11 +2,48 @@ package scheduler
 
 import (
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/user/twitcasting-recorder/apps/gui/pkg/config"
 	"github.com/user/twitcasting-recorder/apps/gui/pkg/workerproc"
 )
+
+func TestRecordingClaimAllowsOnlyOneOwner(t *testing.T) {
+	manager := &ValidationManager{}
+	var acquired atomic.Int32
+	var owners sync.WaitGroup
+	owners.Add(32)
+	for i := 0; i < 32; i++ {
+		go func() {
+			defer owners.Done()
+			if _, ok := manager.tryAcquireRecordingClaim("streamer"); ok {
+				acquired.Add(1)
+			}
+		}()
+	}
+	owners.Wait()
+	if got := acquired.Load(); got != 1 {
+		t.Fatalf("recording claims acquired = %d, want 1", got)
+	}
+}
+
+func TestRecordingClaimReleaseIsOwnerSafe(t *testing.T) {
+	manager := &ValidationManager{}
+	owner, ok := manager.tryAcquireRecordingClaim("streamer")
+	if !ok {
+		t.Fatal("first recording claim was rejected")
+	}
+	manager.releaseRecordingClaim("streamer", &recordingClaim{})
+	if _, ok := manager.tryAcquireRecordingClaim("streamer"); ok {
+		t.Fatal("non-owner release removed the active recording claim")
+	}
+	manager.releaseRecordingClaim("streamer", owner)
+	if _, ok := manager.tryAcquireRecordingClaim("streamer"); !ok {
+		t.Fatal("owner release did not free the recording claim")
+	}
+}
 
 type testNotifier struct {
 	statuses []string

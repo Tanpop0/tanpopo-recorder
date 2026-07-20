@@ -8,6 +8,29 @@ import (
 	"testing"
 )
 
+func TestRecordingHandleRegistrationRejectsDuplicateAndPreservesOwner(t *testing.T) {
+	id := "registration-test"
+	activeCmds.Delete(normalizeID(id))
+	t.Cleanup(func() { activeCmds.Delete(normalizeID(id)) })
+
+	owner := &recordingHandle{}
+	other := &recordingHandle{}
+	if !registerRecordingHandle(id, owner) {
+		t.Fatal("first recording handle was rejected")
+	}
+	if registerRecordingHandle(id, other) {
+		t.Fatal("duplicate recording handle was accepted")
+	}
+	unregisterRecordingHandle(id, other)
+	if registerRecordingHandle(id, other) {
+		t.Fatal("non-owner unregister removed the active handle")
+	}
+	unregisterRecordingHandle(id, owner)
+	if !registerRecordingHandle(id, other) {
+		t.Fatal("owner unregister did not free the recording handle")
+	}
+}
+
 func TestPickStableVariantURLKeepsOriginalMode(t *testing.T) {
 	raw := "https://twitcasting.tv/livehls/streams/1/hls/705.00/media.705.m3u8"
 

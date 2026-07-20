@@ -84,6 +84,20 @@ func (m *ValidationManager) clearCheckFailure(screenID string) {
 	m.checkFailures.Delete(screenID)
 }
 
+func (m *ValidationManager) tryAcquireRecordingClaim(screenID string) (*recordingClaim, bool) {
+	claim := &recordingClaim{}
+	if _, loaded := m.recordingClaims.LoadOrStore(screenID, claim); loaded {
+		return nil, false
+	}
+	return claim, true
+}
+
+func (m *ValidationManager) releaseRecordingClaim(screenID string, claim *recordingClaim) {
+	if claim != nil {
+		m.recordingClaims.CompareAndDelete(screenID, claim)
+	}
+}
+
 func (m *ValidationManager) retryRecordingAfterDelay(screenID string, delay time.Duration) {
 	go func() {
 		timer := time.NewTimer(delay)
@@ -94,6 +108,9 @@ func (m *ValidationManager) retryRecordingAfterDelay(screenID string, delay time
 			return
 		}
 		if _, recording := m.activeRecordings.Load(screenID); recording {
+			return
+		}
+		if _, claimed := m.recordingClaims.Load(screenID); claimed {
 			return
 		}
 		if m.getRecordingConfigForStreamer(screenID).WorkerEnabled {

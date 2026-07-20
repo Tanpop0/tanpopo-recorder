@@ -88,6 +88,15 @@ var (
 
 var hlsVariantPattern = regexp.MustCompile(`(/hls/)(\d+\.\d+)(/media(?:\.\d+)?\.m3u8)`)
 
+func registerRecordingHandle(streamerID string, handle *recordingHandle) bool {
+	_, loaded := activeCmds.LoadOrStore(normalizeID(streamerID), handle)
+	return !loaded
+}
+
+func unregisterRecordingHandle(streamerID string, handle *recordingHandle) {
+	activeCmds.CompareAndDelete(normalizeID(streamerID), handle)
+}
+
 func toolExecutableNames(toolName string) []string {
 	if stdruntime.GOOS == "windows" {
 		return []string{toolName + ".exe", toolName}
@@ -748,7 +757,7 @@ func RecordLiveStreamWithOptions(streamerID, title, streamURL, outputDir string,
 		return "", "", 0, false, fmt.Errorf("mkdir failed: %w", err)
 	}
 
-	timestamp := time.Now().Format("20060102-150405")
+	timestamp := time.Now().Format("20060102-150405-000")
 	tempFileName := fmt.Sprintf("%s_temp_%s%s", sanitizedID, timestamp, plan.tempExt)
 	tempOutputPath := filepath.Join(streamerDir, tempFileName)
 	finalFileName := fmt.Sprintf("%s_%s_%s%s", sanitizedID, sanitizedTitle, timestamp, plan.finalExt)
@@ -822,8 +831,10 @@ func RecordLiveStreamWithOptions(streamerID, title, streamURL, outputDir string,
 
 	normID := normalizeID(streamerID)
 	h := &recordingHandle{cmd: cmd, stdin: stdin}
-	activeCmds.Store(normID, h)
-	defer activeCmds.Delete(normID)
+	if !registerRecordingHandle(normID, h) {
+		return "", "", 0, false, fmt.Errorf("recording already active for %s", streamerID)
+	}
+	defer unregisterRecordingHandle(normID, h)
 
 	fmt.Printf("Starting ffmpeg for %s...\nStream URL: %s\nCommand: %s %s\n", streamerID, streamURL, findFFmpegPath(options.FFmpegPath), redactFFmpegArgs(ffmpegArgs))
 	if notifier != nil {
@@ -851,8 +862,7 @@ func RecordLiveStreamWithOptions(streamerID, title, streamURL, outputDir string,
 	lastRestrictedAccessLine := ""
 	mediaProgress := newMediaProgressMonitor(startTime)
 	stallReason := ""
-	timeRegex := regexp.MustCompile(`time=([0-9:.]+)`)
-	outTimeRegex := regexp.MustCompile(`out_time=([0-9:.]+)`)
+	outTimeRegex := regexp.MustCompile(`^out_time=([0-9:.]+)$`)
 
 	notifyProgress := func(mediaTime string) {
 		mediaTime, advanced := mediaProgress.Observe(mediaTime, time.Now())
@@ -901,12 +911,10 @@ func RecordLiveStreamWithOptions(streamerID, title, streamURL, outputDir string,
 				continue
 			}
 
-			if m := outTimeRegex.FindStringSubmatch(line); len(m) > 1 {
-				notifyProgress(m[1])
-				continue
-			}
-			if m := timeRegex.FindStringSubmatch(line); len(m) > 1 {
-				notifyProgress(m[1])
+			if name == "stdout" {
+				if m := outTimeRegex.FindStringSubmatch(line); len(m) > 1 {
+					notifyProgress(m[1])
+				}
 				continue
 			}
 

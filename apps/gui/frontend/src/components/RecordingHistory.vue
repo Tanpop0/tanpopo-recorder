@@ -114,6 +114,7 @@ const emit = defineEmits(['changed'])
 const statusOptions = [
   { value: 'all', label: '全部' },
   { value: 'completed', label: '完成' },
+  { value: 'manual', label: '手动停止' },
   { value: 'warning', label: '偏短/中断' },
   { value: 'error', label: '异常' },
 ]
@@ -205,7 +206,7 @@ const mediaSummary = (record) => {
 const recordHealth = (record) => {
   const status = String(record.status || 'completed').toLowerCase()
   if (status === 'manual_stopped') {
-    return { level: 'warning', text: '手动停止' }
+    return { level: 'manual', text: '手动停止' }
   }
   if (['short', 'too_short', 'small', 'too_small', 'failed_short', 'interrupted'].includes(status)) {
     return { level: 'warning', text: status === 'interrupted' ? '中断' : '偏短' }
@@ -221,6 +222,7 @@ const filteredHistory = computed(() => {
   return history.value.filter((record) => {
     const health = recordHealth(record)
     if (statusFilter.value !== 'all') {
+      if (statusFilter.value === 'manual' && health.level !== 'manual') return false
       if (statusFilter.value === 'warning' && health.level !== 'warning') return false
       if (statusFilter.value === 'error' && health.level !== 'error') return false
       if (statusFilter.value === 'completed' && health.level !== 'completed') return false
@@ -429,6 +431,10 @@ defineExpose({ refreshHistory, filterByStreamer })
   border-left-color: #f59e0b;
 }
 
+.history-card.manual {
+  border-left-color: #3b82f6;
+}
+
 .history-card.error {
   border-left-color: #ef4444;
 }
@@ -510,6 +516,11 @@ defineExpose({ refreshHistory, filterByStreamer })
 .status-label.warning {
   background: #fffbeb;
   color: #b45309;
+}
+
+.status-label.manual {
+  background: #eff6ff;
+  color: #1d4ed8;
 }
 
 .status-label.error {

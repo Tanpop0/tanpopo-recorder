@@ -75,6 +75,7 @@ func (c RecordingConfig) proxyURL() string {
 
 type ValidationManager struct {
 	activeRecordings sync.Map // map[string]bool - currently recording
+	recordingClaims  sync.Map // map[string]*recordingClaim - atomic direct-recorder ownership
 	pausedStreamers  sync.Map // map[string]bool - monitoring paused
 	workerHandles    sync.Map // map[string]*workerproc.Handle - isolated monitor workers
 	workerRestarts   sync.Map // map[string]int - consecutive worker restarts
@@ -104,6 +105,8 @@ type restrictedCheck struct {
 	LiveKey string
 	Count   int
 }
+
+type recordingClaim struct{}
 
 func NewManager(notifier StatusNotifier, cfg *config.Config) *ValidationManager {
 	outputDir := "."
@@ -539,6 +542,9 @@ func (m *ValidationManager) checkAndRecordWithOptions(screenID string, immediate
 	if _, recording := m.activeRecordings.Load(screenID); recording {
 		return
 	}
+	if _, claimed := m.recordingClaims.Load(screenID); claimed {
+		return
+	}
 
 	fmt.Printf("Checking status for %s...\n", screenID)
 	auth := m.getAuthConfigForStreamer(screenID)
@@ -598,6 +604,18 @@ func (m *ValidationManager) checkAndRecordWithOptions(screenID string, immediate
 			return
 		}
 
+		claim, acquired := m.tryAcquireRecordingClaim(screenID)
+		if !acquired {
+			if m.notifier != nil {
+				m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Duplicate recording start suppressed: another recorder owns this streamer", screenID))
+			}
+			return
+		}
+		if !m.IsMonitoring(screenID) {
+			m.releaseRecordingClaim(screenID, claim)
+			return
+		}
+
 		fmt.Printf("%s is LIVE! Title: %s. Stream URL resolved. Starting recording...\n", screenID, info.Title)
 		if m.notifier != nil {
 			m.notifier.NotifyStatus(screenID, "recording", fmt.Sprintf("Live! %s", info.Title))
@@ -609,9 +627,12 @@ func (m *ValidationManager) checkAndRecordWithOptions(screenID string, immediate
 		streamTitle := info.Title
 		streamURL := info.StreamURL
 		outputDir := m.getOutputDirectory()
-		go func(sID, sTitle, sURL, outDir, sessionKey string, ac AuthConfig, rc RecordingConfig) {
+		go func(sID, sTitle, sURL, outDir, sessionKey string, ac AuthConfig, rc RecordingConfig, owner *recordingClaim) {
 			recordingFailed := false
-			defer m.activeRecordings.Delete(sID)
+			defer func() {
+				m.releaseRecordingClaim(sID, owner)
+				m.activeRecordings.Delete(sID)
+			}()
 			defer func() {
 				if m.notifier != nil {
 					if _, paused := m.pausedStreamers.Load(sID); !paused {
@@ -689,7 +710,7 @@ func (m *ValidationManager) checkAndRecordWithOptions(screenID string, immediate
 				m.restrictedChecks.Delete(sID)
 				m.sendRecordingNotification("finish", sID, m.recordingFinishMessage(sID, sTitle, duration, filePath, fileSize))
 			}
-		}(screenID, streamTitle, streamURL, outputDir, liveKey, auth, recordingConfig)
+		}(screenID, streamTitle, streamURL, outputDir, liveKey, auth, recordingConfig, claim)
 	} else {
 		if m.clearRestrictedLive(screenID) && m.notifier != nil {
 			m.notifier.NotifyAppLog(fmt.Sprintf("[%s] Restricted live ended; monitoring resumed", screenID))

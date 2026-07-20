@@ -340,8 +340,9 @@ const filterStreamers = computed(() => {
   }
   return list.sort((a, b) => {
     const getScore = (status) => {
-      if (status === 'recording') return 3
-      if (status === 'monitoring' || status === 'restricted') return 2
+      if (status === 'recording') return 4
+      if (status === 'restricted') return 3
+      if (status === 'monitoring') return 2
       return 1
     }
     const scoreA = getScore(a.current_status)
@@ -480,6 +481,19 @@ const renderRealtimeMessage = (row) => {
     return `标题: ${title} | ${timeText}`
   }
   return msg
+}
+
+const mediaElapsedSeconds = (value) => {
+  const match = String(value || '').trim().match(/^(\d+):(\d{1,2}):(\d{1,2})$/)
+  if (!match) return null
+  return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3])
+}
+
+const shouldAcceptMediaElapsed = (current, next) => {
+  const currentSeconds = mediaElapsedSeconds(current)
+  const nextSeconds = mediaElapsedSeconds(next)
+  if (nextSeconds === null) return false
+  return currentSeconds === null || nextSeconds >= currentSeconds
 }
 
 const basename = (path) => {
@@ -828,7 +842,7 @@ onMounted(() => {
     let displayMessage = data.message || ''
 
     const elapsed = extractMediaElapsed(displayMessage)
-    if (elapsed) {
+    if (elapsed && shouldAcceptMediaElapsed(row.mediaElapsed, elapsed)) {
       row.mediaElapsed = elapsed
     }
 
