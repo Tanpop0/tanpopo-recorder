@@ -1,8 +1,10 @@
 package metadata
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -53,47 +55,11 @@ func FetchMetadata(screenID string) (*StreamerMetadata, error) {
 	// Let's use the frontend API for user info which is cleaner than HTML scraping
 	// URL: https://frontendapi.twitcasting.tv/users/[ID]
 
-	url := fmt.Sprintf("https://frontendapi.twitcasting.tv/users/%s", screenID)
+	meta, err := FetchUserMetadata(screenID)
+	if err != nil {
+		return nil, err
+	}
 	client := newHTTPClient(10 * time.Second)
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// Set headers to look like a browser
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("API returned status: %d", resp.StatusCode)
-	}
-
-	// Define a partial struct for the API response
-	var apiResp struct {
-		User struct {
-			ID       string `json:"id"`
-			ScreenID string `json:"screen_id"`
-			Name     string `json:"name"`
-			Image    string `json:"image"`
-			IsLive   bool   `json:"is_live"` // This field might not exist or be named differently, need to verify
-		} `json:"user"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, err
-	}
-
-	meta := &StreamerMetadata{
-		ScreenID: apiResp.User.ScreenID,
-		Nickname: apiResp.User.Name,
-		Avatar:   apiResp.User.Image,
-	}
 
 	// To check if live and get title, we might need another endpoint or the same one if it has live info.
 	// Let's check the latest-movie endpoint for live status/title
@@ -123,4 +89,92 @@ func FetchMetadata(screenID string) (*StreamerMetadata, error) {
 	}
 
 	return meta, nil
+}
+
+// FetchUserMetadata refreshes stable profile fields without making a live-status request.
+func FetchUserMetadata(screenID string) (*StreamerMetadata, error) {
+	endpoint := fmt.Sprintf("https://frontendapi.twitcasting.tv/users/%s", screenID)
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+		}
+		req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("User-Agent", browserUserAgent)
+		resp, err := newHTTPClient(10 * time.Second).Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		var apiResp struct {
+			User struct {
+				ScreenID string `json:"screenName"`
+				Name     string `json:"name"`
+				Image    string `json:"image"`
+			} `json:"user"`
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&apiResp)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("user metadata API returned status %d", resp.StatusCode)
+			continue
+		}
+		if decodeErr != nil {
+			lastErr = decodeErr
+			continue
+		}
+		avatar := normalizeAvatarURL(apiResp.User.Image)
+		if strings.TrimSpace(apiResp.User.Name) == "" && avatar == "" {
+			lastErr = fmt.Errorf("user metadata response is empty")
+			continue
+		}
+		return &StreamerMetadata{ScreenID: apiResp.User.ScreenID, Nickname: apiResp.User.Name, Avatar: avatar}, nil
+	}
+	return nil, fmt.Errorf("fetch user metadata failed: %w", lastErr)
+}
+
+const browserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36"
+
+func normalizeAvatarURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "//") {
+		return "https:" + raw
+	}
+	return raw
+}
+
+// FetchAvatar downloads an avatar through the same proxy path used by metadata requests.
+func FetchAvatar(rawURL string) ([]byte, string, error) {
+	avatarURL := normalizeAvatarURL(rawURL)
+	if avatarURL == "" {
+		return nil, "", fmt.Errorf("avatar URL is empty")
+	}
+	req, err := http.NewRequest(http.MethodGet, avatarURL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("User-Agent", browserUserAgent)
+	resp, err := newHTTPClient(12 * time.Second).Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("avatar request returned status %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if len(data) == 0 || len(data) > 2*1024*1024 {
+		return nil, "", fmt.Errorf("avatar response size is invalid")
+	}
+	mimeType := http.DetectContentType(data)
+	if !strings.HasPrefix(mimeType, "image/") || bytes.HasPrefix(data, []byte("<")) {
+		return nil, "", fmt.Errorf("avatar response is not an image")
+	}
+	return data, mimeType, nil
 }

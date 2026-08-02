@@ -2,7 +2,7 @@
   <aside class="detail-panel">
     <template v-if="streamer">
       <div class="detail-head">
-        <el-avatar :size="52" :src="streamer.avatar || 'https://twitcasting.tv/img/user_default.png'" />
+        <el-avatar :size="52" :src="streamer.avatar || 'https://twitcasting.tv/img/user_default.png'" @error="emit('avatar-error', streamer)" />
         <div>
           <h2>{{ streamer.nickname || streamer.screen_id }}</h2>
           <p>{{ streamer.screen_id }}</p>
@@ -74,7 +74,7 @@
       <div class="recent-log">
         <div class="section-label">最近日志</div>
         <div v-if="!streamer.recentLogs || streamer.recentLogs.length === 0" class="log-empty">暂无日志</div>
-        <div v-for="(line, index) in streamer.recentLogs.slice(0, 6)" :key="index" class="log-line">{{ line }}</div>
+        <div v-for="(line, index) in streamer.recentLogs.slice(0, 6)" :key="index" class="log-line">{{ displayLogLine(line) }}</div>
       </div>
     </template>
     <div v-else class="detail-empty">
@@ -106,6 +106,10 @@ defineProps({
     type: Function,
     required: true
   },
+  displayLogLine: {
+    type: Function,
+    required: true
+  },
   authModeOptions: {
     type: Array,
     required: true
@@ -131,7 +135,8 @@ const emit = defineEmits([
   'toggle-monitoring',
   'update-auth',
   'update-quality',
-  'update-telegram'
+  'update-telegram',
+  'avatar-error'
 ])
 </script>
 

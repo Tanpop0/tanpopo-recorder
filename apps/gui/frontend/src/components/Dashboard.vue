@@ -47,6 +47,7 @@
             @select="selectStreamer"
             @toggle-monitoring="setMonitoringByRow"
             @open-details="openDetails"
+            @avatar-error="refreshAvatar"
           />
 
           <StreamerSidePanel
@@ -55,6 +56,7 @@
             :stat-items="detailStatItems"
             :realtime-message="renderRealtimeMessage"
             :diagnostics-message="renderDiagnosticsMessage"
+            :display-log-line="localizeAppLogLine"
             :auth-mode-options="authModeOptions"
             :quality-mode-options="qualityModeOptions"
             :is-busy="isStreamerBusy"
@@ -66,6 +68,7 @@
             @update-auth="updateStreamerAuthMode"
             @update-quality="updateStreamerQualityMode"
             @update-telegram="updateStreamerTelegramEnabled"
+            @avatar-error="refreshAvatar"
           />
         </div>
       </el-tab-pane>
@@ -95,7 +98,7 @@ import AddStreamerDialog from './AddStreamerDialog.vue'
 import StreamerTaskPanel from './StreamerTaskPanel.vue'
 import StreamerSidePanel from './StreamerSidePanel.vue'
 import StreamerDetailDialog from './StreamerDetailDialog.vue'
-import { GetStreamers, AddStreamer, RemoveStreamer, SetMonitoring, SetAllMonitoring, GetRecordingHistory, UpdateStreamerOptions } from '../../wailsjs/go/main/App'
+import { GetStreamers, AddStreamer, RemoveStreamer, SetMonitoring, SetAllMonitoring, GetRecordingHistory, UpdateStreamerOptions, RefreshStreamerMetadata } from '../../wailsjs/go/main/App'
 import { BrowserOpenURL, EventsOn } from '../../wailsjs/runtime'
 import { ElMessage } from 'element-plus'
 
@@ -122,6 +125,7 @@ const bulkState = ref({
 })
 let ticker = null
 let bulkHideTimer = null
+const avatarRefreshPending = new Set()
 
 const authModeOptions = [
   { value: '', label: '继承全局' },
@@ -149,10 +153,60 @@ const appendOpLog = (msg) => {
   }
 }
 
+const localizeAppLogLine = (raw) => {
+  const text = String(raw || '').trim()
+  const lower = text.toLowerCase()
+  const prefixMatch = text.match(/^((?:\[[^\]]+\]\s*)+)/)
+  const cleanPrefix = (prefixMatch?.[1].match(/\[[^\]]+\]/g) || [])
+    .filter(group => !/^\[(?:stderr|stdout|in#|out#|tcp\s@|hls\s@|https\s@|tls\s@|null\s@|aist#|vist#)/i.test(group))
+    .join(' ')
+  const prefix = cleanPrefix ? `${cleanPrefix} ` : ''
+
+  if (lower.includes('error opening input') && lower.includes('404 not found')) {
+    return `${prefix}录制流不可用：直播可能已结束、流地址已失效，或当前账号无观看权限`
+  }
+  if (lower.includes('401 unauthorized') || lower.includes('authorization failed')) {
+    return `${prefix}录制鉴权失败：请刷新 Cookie，或确认当前账号具有观看权限`
+  }
+  if (lower.includes('403 forbidden')) {
+    return `${prefix}服务器拒绝访问录制流：当前账号、Cookie 或代理出口可能无权限`
+  }
+  if (lower.includes('check live status failed') && (lower.includes('context deadline exceeded') || lower.includes('client.timeout exceeded') || lower.includes('tls handshake timeout'))) {
+    return `${prefix}直播状态检查超时：通常由代理或网络连接波动导致，程序将在下次检查时重试`
+  }
+  if (lower.includes('lacked sufficient buffer space') || lower.includes('queue was full')) {
+    return `${prefix}本机或代理连接资源不足：连接队列已满，请检查代理负载`
+  }
+  if (lower.includes('proxyconnect') && (lower.includes('connection refused') || lower.includes('dial tcp'))) {
+    return `${prefix}无法连接本地代理：请确认代理程序和端口正在运行`
+  }
+  if (lower.includes('forcibly closed by the remote host') || lower.includes('connection reset')) {
+    return `${prefix}网络连接被中途重置：通常由代理节点或线路波动导致`
+  }
+  if (lower.includes('media progress stalled')) {
+    return `${prefix}媒体进度长时间未更新：当前录制将停止并自动重新连接`
+  }
+  if (lower.includes('no usable cookies were found')) {
+    return `${prefix}未找到可用 Cookie：请检查 Cookie 文件路径和内容`
+  }
+  if (lower.includes('login-required placeholder recording detected')) {
+    return `${prefix}检测到登录提示占位录像：Cookie 已失效或当前账号没有观看权限`
+  }
+  if (lower.includes('error during demuxing') && lower.includes('error number -138')) {
+    return `${prefix}录制连接中断：FFmpeg 正在等待恢复或重新连接直播流`
+  }
+  if (lower.includes('failed to start ffmpeg') || lower.includes('executable file not found')) {
+    return `${prefix}无法启动 FFmpeg：请检查设置中的 FFmpeg 可执行文件路径`
+  }
+  return text
+}
+
 const simplifyAppLogLine = (raw) => {
   const text = String(raw || '').trim()
   if (!text) return ''
   const lower = text.toLowerCase()
+  const localized = localizeAppLogLine(text)
+  if (localized !== text) return localized
 
   // First drop ffmpeg high-frequency noise, even if it contains "error=".
   const noisyPatterns = [
@@ -235,6 +289,24 @@ const simplifyAppLogLine = (raw) => {
 
 const clearOperationLogs = () => {
   operationLogs.value = []
+}
+
+const refreshAvatar = async (row) => {
+  const screenID = row?.screen_id
+  if (!screenID || avatarRefreshPending.has(screenID)) return
+  avatarRefreshPending.add(screenID)
+  try {
+    const err = await RefreshStreamerMetadata(screenID)
+    if (err) {
+      appendOpLog(`${screenID} 头像刷新失败：${err}`)
+      return
+    }
+    await refreshList()
+  } catch (e) {
+    appendOpLog(`${screenID} 头像刷新失败：${e?.message || e}`)
+  } finally {
+    setTimeout(() => avatarRefreshPending.delete(screenID), 30000)
+  }
 }
 
 const findStreamer = (screenID) => streamers.value.find(s => s.screen_id === screenID)
@@ -520,7 +592,7 @@ const renderDiagnosticsMessage = (row) => {
   const lastError = row.last_error || row.lastError
   const lastFilePath = row.last_file_path || row.lastFilePath
   if (lastError) {
-    parts.push(`最近错误: ${lastError}`)
+    parts.push(`最近错误: ${localizeAppLogLine(lastError)}`)
   }
   if (lastFilePath) {
     parts.push(`产物: ${basename(lastFilePath)}`)
@@ -942,6 +1014,10 @@ onMounted(() => {
     if (row.lastError) {
       row.consecutiveFailures = Math.max(row.consecutiveFailures || 0, 1)
     }
+  })
+
+  EventsOn('streamer-metadata-updated', () => {
+    refreshList()
   })
 
   EventsOn('app-log', (payload) => {

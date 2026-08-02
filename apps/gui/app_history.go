@@ -16,10 +16,14 @@ import (
 )
 
 func (a *App) AddRecordingHistory(streamerID, filePath, duration string, fileSize int64) {
-	a.AddRecordingHistoryWithStatus(streamerID, filePath, duration, fileSize, "completed")
+	a.AddRecordingHistoryWithDetails(streamerID, filePath, duration, fileSize, "completed", "")
 }
 
 func (a *App) AddRecordingHistoryWithStatus(streamerID, filePath, duration string, fileSize int64, status string) {
+	a.AddRecordingHistoryWithDetails(streamerID, filePath, duration, fileSize, status, "")
+}
+
+func (a *App) AddRecordingHistoryWithDetails(streamerID, filePath, duration string, fileSize int64, status, errorDetail string) {
 	if a.historyManager == nil {
 		return
 	}
@@ -36,6 +40,7 @@ func (a *App) AddRecordingHistoryWithStatus(streamerID, filePath, duration strin
 	media := recorder.ProbeMediaDetails(filePath, fileSize, duration, ffprobePath)
 
 	now := time.Now()
+	errorCode, errorSummary := history.FailureInfo(status, errorDetail)
 	record := history.RecordingRecord{
 		ID:           uuid.New().String(),
 		StreamerID:   streamerID,
@@ -45,6 +50,9 @@ func (a *App) AddRecordingHistoryWithStatus(streamerID, filePath, duration strin
 		StartTime:    now,
 		EndTime:      now,
 		Status:       status,
+		ErrorCode:    errorCode,
+		ErrorSummary: errorSummary,
+		ErrorDetail:  strings.TrimSpace(errorDetail),
 		MediaBitrate: media.MediaBitrate,
 		VideoBitrate: media.VideoBitrate,
 		AudioBitrate: media.AudioBitrate,
@@ -53,6 +61,9 @@ func (a *App) AddRecordingHistoryWithStatus(streamerID, filePath, duration strin
 		FrameRate:    media.FrameRate,
 		VideoCodec:   media.VideoCodec,
 		AudioCodec:   media.AudioCodec,
+	}
+	if errorCode != "" {
+		record.ErrorAt = &now
 	}
 
 	if err := a.historyManager.AddRecord(record); err != nil {
@@ -75,9 +86,12 @@ func (a *App) GetRecordingHistory() []history.RecordingRecord {
 	streamers := a.streamerMetaSnapshot()
 	for i := range records {
 		fillHistorySidecars(&records[i])
+		if records[i].ErrorSummary == "" {
+			records[i].ErrorCode, records[i].ErrorSummary = history.FailureInfo(records[i].Status, records[i].ErrorDetail)
+		}
 		if meta, ok := streamers[normalizeID(records[i].StreamerID)]; ok {
 			records[i].Nickname = meta.Nickname
-			records[i].Avatar = meta.Avatar
+			records[i].Avatar = a.avatarSource(records[i].StreamerID, meta.Avatar)
 		}
 	}
 	return records

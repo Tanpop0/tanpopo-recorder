@@ -26,7 +26,7 @@
         type="button"
         @click="emit('select', streamer)"
       >
-        <el-avatar :size="42" :src="streamer.avatar || 'https://twitcasting.tv/img/user_default.png'" />
+        <el-avatar :size="42" :src="streamer.avatar || 'https://twitcasting.tv/img/user_default.png'" @error="emit('avatar-error', streamer)" />
         <div class="streamer-main">
           <div class="streamer-title-line">
             <span class="streamer-id">{{ streamer.screen_id }}</span>
@@ -105,7 +105,8 @@ const emit = defineEmits([
   'refresh',
   'select',
   'toggle-monitoring',
-  'open-details'
+  'open-details',
+  'avatar-error'
 ])
 </script>
 

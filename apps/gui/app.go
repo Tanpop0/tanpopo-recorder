@@ -21,18 +21,21 @@ import (
 
 // App struct
 type App struct {
-	ctx            context.Context
-	config         *config.Config
-	scheduler      *scheduler.ValidationManager
-	historyManager *history.HistoryManager
-	isQuitting     atomic.Bool
-	bulkOperation  atomic.Uint64
-	shutdownOnce   sync.Once
-	mu             sync.RWMutex
-	diagMu         sync.RWMutex
-	diagnostics    map[string]*StreamerDiagnostics
-	statusMu       sync.RWMutex
-	runtimeStatus  map[string]StreamerRuntimeStatus
+	ctx               context.Context
+	config            *config.Config
+	scheduler         *scheduler.ValidationManager
+	historyManager    *history.HistoryManager
+	isQuitting        atomic.Bool
+	bulkOperation     atomic.Uint64
+	shutdownOnce      sync.Once
+	mu                sync.RWMutex
+	diagMu            sync.RWMutex
+	diagnostics       map[string]*StreamerDiagnostics
+	statusMu          sync.RWMutex
+	runtimeStatus     map[string]StreamerRuntimeStatus
+	avatarMu          sync.RWMutex
+	avatarData        map[string]string
+	metadataRefreshes sync.Map
 }
 
 type SettingsPayload struct {
@@ -86,6 +89,7 @@ func NewApp() *App {
 	return &App{
 		diagnostics:   make(map[string]*StreamerDiagnostics),
 		runtimeStatus: make(map[string]StreamerRuntimeStatus),
+		avatarData:    make(map[string]string),
 	}
 }
 
@@ -133,6 +137,7 @@ func (a *App) startup(ctx context.Context) {
 
 	a.scheduler.Start()
 	log.Println("Scheduler started")
+	go a.refreshStaleStreamerMetadata()
 }
 
 func (a *App) beforeClose(ctx context.Context) (prevent bool) {

@@ -28,6 +28,7 @@ type StatusNotifier interface {
 	NotifyAppLog(message string)
 	AddRecordingHistory(streamerID, filePath, duration string, fileSize int64)
 	AddRecordingHistoryWithStatus(streamerID, filePath, duration string, fileSize int64, status string)
+	AddRecordingHistoryWithDetails(streamerID, filePath, duration string, fileSize int64, status, errorDetail string)
 }
 
 type AuthConfig struct {
@@ -670,7 +671,11 @@ func (m *ValidationManager) checkAndRecordWithOptions(screenID string, immediate
 
 			if filePath != "" && m.notifier != nil && (fileSize > 0 || stoppedByUser) {
 				historyStatus := classifyRecordingStatus(duration, fileSize, stoppedByUser, recErr, rc)
-				m.notifier.AddRecordingHistoryWithStatus(sID, filePath, duration, fileSize, historyStatus)
+				errorDetail := ""
+				if recErr != nil {
+					errorDetail = recErr.Error()
+				}
+				m.notifier.AddRecordingHistoryWithDetails(sID, filePath, duration, fileSize, historyStatus, errorDetail)
 			}
 
 			if recErr != nil {

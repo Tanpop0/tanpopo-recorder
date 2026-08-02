@@ -64,6 +64,10 @@ func (n *testNotifier) AddRecordingHistoryWithStatus(streamerID, filePath, durat
 	n.history = append(n.history, fmt.Sprintf("%s:%s", streamerID, status))
 }
 
+func (n *testNotifier) AddRecordingHistoryWithDetails(streamerID, filePath, duration string, fileSize int64, status, errorDetail string) {
+	n.history = append(n.history, fmt.Sprintf("%s:%s", streamerID, status))
+}
+
 func TestClassifyRecordingStatusShort(t *testing.T) {
 	rc := RecordingConfig{MinDurationSeconds: 10}
 	got := classifyRecordingStatus("00:00:05", 5*1024*1024, false, nil, rc)
@@ -93,6 +97,13 @@ func TestClassifyRecordingStatusFailedNetworkStall(t *testing.T) {
 	got := classifyRecordingStatus("00:03:25", 50*1024*1024, false, fmt.Errorf("ffmpeg media progress stalled: media progress stalled for 3m0s"), rc)
 	if got != "failed_network" {
 		t.Fatalf("classifyRecordingStatus() = %q, want failed_network", got)
+	}
+}
+
+func TestClassifyRecordingStatusMissingStream(t *testing.T) {
+	got := classifyRecordingStatus("00:00:03", 1024, false, fmt.Errorf("Error opening input: Server returned 404 Not Found"), RecordingConfig{})
+	if got != "failed_stream" {
+		t.Fatalf("classifyRecordingStatus() = %q, want failed_stream", got)
 	}
 }
 

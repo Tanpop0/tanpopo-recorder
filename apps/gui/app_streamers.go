@@ -67,7 +67,7 @@ func (a *App) GetStreamers() []StreamerStatus {
 			Schedule:        s.Schedule,
 			IsMonitoring:    isMonitoring,
 			Nickname:        s.Nickname,
-			Avatar:          s.Avatar,
+			Avatar:          a.avatarSource(s.ScreenID, s.Avatar),
 			QualityMode:     s.QualityMode,
 			ContainerMode:   s.ContainerMode,
 			AuthMode:        s.AuthMode,
@@ -132,6 +132,8 @@ func (a *App) AddStreamer(screenID string, schedule string, qualityMode string, 
 	if meta, err := metadata.FetchMetadata(screenID); err == nil {
 		newStreamer.Nickname = meta.Nickname
 		newStreamer.Avatar = meta.Avatar
+		newStreamer.MetadataUpdatedAt = time.Now()
+		_ = a.cacheStreamerAvatar(screenID, meta.Avatar)
 	} else {
 		log.Printf("Failed to fetch metadata for %s: %v", screenID, err)
 	}

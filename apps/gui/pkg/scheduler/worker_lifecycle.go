@@ -222,7 +222,7 @@ func (m *ValidationManager) handleWorkerEvent(fallbackScreenID string, evt worke
 				recErr = fmt.Errorf("%s", evt.Error)
 			}
 			historyStatus := classifyRecordingStatus(evt.Duration, evt.FileSize, evt.StoppedByUser, recErr, m.getRecordingConfigForStreamer(screenID))
-			m.notifier.AddRecordingHistoryWithStatus(screenID, evt.FilePath, evt.Duration, evt.FileSize, historyStatus)
+			m.notifier.AddRecordingHistoryWithDetails(screenID, evt.FilePath, evt.Duration, evt.FileSize, historyStatus, evt.Error)
 		}
 		if mediaProgressStall && !evt.StoppedByUser && m.notifier != nil {
 			if !paused {

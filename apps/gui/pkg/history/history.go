@@ -3,23 +3,28 @@ package history
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
 
 // RecordingRecord represents a single recording history entry
 type RecordingRecord struct {
-	ID         string    `json:"id"`
-	StreamerID string    `json:"streamer_id"`
-	Title      string    `json:"title"` // Optional, if available
-	Nickname   string    `json:"nickname,omitempty"`
-	Avatar     string    `json:"avatar,omitempty"`
-	FilePath   string    `json:"file_path"`
-	FileSize   int64     `json:"file_size"` // in bytes
-	Duration   string    `json:"duration"`  // formatted string or seconds
-	StartTime  time.Time `json:"start_time"`
-	EndTime    time.Time `json:"end_time"`
-	Status     string    `json:"status"` // "completed", "failed", "interrupted"
+	ID           string     `json:"id"`
+	StreamerID   string     `json:"streamer_id"`
+	Title        string     `json:"title"` // Optional, if available
+	Nickname     string     `json:"nickname,omitempty"`
+	Avatar       string     `json:"avatar,omitempty"`
+	FilePath     string     `json:"file_path"`
+	FileSize     int64      `json:"file_size"` // in bytes
+	Duration     string     `json:"duration"`  // formatted string or seconds
+	StartTime    time.Time  `json:"start_time"`
+	EndTime      time.Time  `json:"end_time"`
+	Status       string     `json:"status"` // "completed", "failed", "interrupted"
+	ErrorCode    string     `json:"error_code,omitempty"`
+	ErrorSummary string     `json:"error_summary,omitempty"`
+	ErrorDetail  string     `json:"error_detail,omitempty"`
+	ErrorAt      *time.Time `json:"error_at,omitempty"`
 
 	MediaBitrate int64   `json:"media_bitrate,omitempty"` // total bits per second
 	VideoBitrate int64   `json:"video_bitrate,omitempty"`
@@ -117,6 +122,14 @@ func (hm *HistoryManager) UpdateRecordStatus(id string, status string) error {
 	for i := range hm.records {
 		if hm.records[i].ID == id {
 			hm.records[i].Status = status
+			if strings.EqualFold(strings.TrimSpace(status), "completed") {
+				hm.records[i].ErrorCode = ""
+				hm.records[i].ErrorSummary = ""
+				hm.records[i].ErrorDetail = ""
+				hm.records[i].ErrorAt = nil
+			} else if hm.records[i].ErrorSummary == "" {
+				hm.records[i].ErrorCode, hm.records[i].ErrorSummary = FailureInfo(status, hm.records[i].ErrorDetail)
+			}
 			return hm.save()
 		}
 	}

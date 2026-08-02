@@ -221,7 +221,11 @@ func runRecord(args []string) error {
 	)
 	status := classifyStatus(duration, fileSize, stoppedByUser, recErr, cfg)
 	if filePath != "" && (fileSize > 0 || stoppedByUser || recErr != nil) {
-		notifier.AddRecordingHistoryWithStatus(screenID, filePath, duration, fileSize, status)
+		errorDetail := ""
+		if recErr != nil {
+			errorDetail = recErr.Error()
+		}
+		notifier.AddRecordingHistoryWithDetails(screenID, filePath, duration, fileSize, status, errorDetail)
 	}
 	if recErr != nil {
 		if !stoppedByUser {
@@ -361,6 +365,10 @@ func (n *cliNotifier) AddRecordingHistory(streamerID, filePath, duration string,
 }
 
 func (n *cliNotifier) AddRecordingHistoryWithStatus(streamerID, filePath, duration string, fileSize int64, status string) {
+	n.AddRecordingHistoryWithDetails(streamerID, filePath, duration, fileSize, status, "")
+}
+
+func (n *cliNotifier) AddRecordingHistoryWithDetails(streamerID, filePath, duration string, fileSize int64, status, errorDetail string) {
 	if n.history == nil || strings.TrimSpace(filePath) == "" {
 		return
 	}
@@ -368,15 +376,22 @@ func (n *cliNotifier) AddRecordingHistoryWithStatus(streamerID, filePath, durati
 		status = "completed"
 	}
 	now := time.Now()
+	errorCode, errorSummary := history.FailureInfo(status, errorDetail)
 	record := history.RecordingRecord{
-		ID:         fmt.Sprintf("%d-%s", now.UnixNano(), sanitizeID(streamerID)),
-		StreamerID: streamerID,
-		FilePath:   filePath,
-		FileSize:   fileSize,
-		Duration:   duration,
-		StartTime:  now,
-		EndTime:    now,
-		Status:     status,
+		ID:           fmt.Sprintf("%d-%s", now.UnixNano(), sanitizeID(streamerID)),
+		StreamerID:   streamerID,
+		FilePath:     filePath,
+		FileSize:     fileSize,
+		Duration:     duration,
+		StartTime:    now,
+		EndTime:      now,
+		Status:       status,
+		ErrorCode:    errorCode,
+		ErrorSummary: errorSummary,
+		ErrorDetail:  strings.TrimSpace(errorDetail),
+	}
+	if errorCode != "" {
+		record.ErrorAt = &now
 	}
 	if err := n.history.AddRecord(record); err != nil {
 		n.write(fmt.Sprintf("history write failed: %v", err))

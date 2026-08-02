@@ -33,6 +33,7 @@ apps/cli/config.yaml
 download/
 logs/
 **/logs/
+**/avatar-cache/
 apps/cli/download/
 **/*_temp_*.ts
 **/recordings/

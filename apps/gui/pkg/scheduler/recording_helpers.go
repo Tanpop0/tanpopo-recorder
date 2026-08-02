@@ -86,9 +86,6 @@ func classifyRecordingStatus(duration string, fileSize int64, stoppedByUser bool
 		return "manual_stopped"
 	}
 	if recErr != nil {
-		if isShortRecording(duration, fileSize, rc) {
-			return "failed_short"
-		}
 		return "failed_" + classifyErrorCategory(recErr.Error())
 	}
 	if isShortRecording(duration, fileSize, rc) {
@@ -134,7 +131,7 @@ func classifyErrorCategory(message string) string {
 		return "proxy"
 	case strings.Contains(lower, "media progress stalled"), strings.Contains(lower, "timeout"), strings.Contains(lower, "i/o timeout"), strings.Contains(lower, "network"), strings.Contains(lower, "connection reset"), strings.Contains(lower, "connection to "), strings.Contains(lower, "connection failed"), strings.Contains(lower, "input/output error"), strings.Contains(lower, "end of file"), strings.Contains(lower, "no such host"), strings.Contains(lower, "503"), strings.Contains(lower, "429"):
 		return "network"
-	case strings.Contains(lower, "stream url is empty"), strings.Contains(lower, "no stream url"), strings.Contains(lower, "m3u8"):
+	case strings.Contains(lower, "stream url is empty"), strings.Contains(lower, "no stream url"), strings.Contains(lower, "m3u8"), strings.Contains(lower, "404 not found"), strings.Contains(lower, "server returned 404"):
 		return "stream"
 	case strings.Contains(lower, "permission"), strings.Contains(lower, "access is denied"), strings.Contains(lower, "mkdir"), strings.Contains(lower, "write"):
 		return "file"

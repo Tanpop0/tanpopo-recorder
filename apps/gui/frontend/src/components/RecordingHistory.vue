@@ -53,6 +53,13 @@
             <div v-if="mediaSummary(record)" class="media-info">
               {{ mediaSummary(record) }}
             </div>
+            <div v-if="recordErrorSummary(record)" class="error-reason">
+              <div><strong>异常原因：</strong>{{ recordErrorSummary(record) }}</div>
+              <details v-if="record.error_detail">
+                <summary>查看原始错误</summary>
+                <code>{{ record.error_detail }}</code>
+              </details>
+            </div>
             <div class="comment-info">
               <span v-if="record.comment_text_exists" class="comment-badge">评论 TXT</span>
               <span v-if="record.comment_jsonl_exists" class="comment-badge">JSONL</span>
@@ -215,6 +222,24 @@ const recordHealth = (record) => {
     return { level: 'error', text: '异常' }
   }
   return { level: 'completed', text: '完成' }
+}
+
+const errorSummaryByStatus = {
+  failed_auth: 'Cookie 或账号鉴权失败',
+  failed_proxy: '代理连接失败',
+  failed_network: '网络连接异常或媒体进度停滞',
+  failed_stream: '录制流不可用、已失效或无权访问',
+  failed_file: '录像文件创建或写入失败',
+  failed_ffmpeg: 'FFmpeg 处理录制流失败',
+  failed_short: '录制失败且生成的录像过短',
+  failed_unknown: '录制异常，原因未能自动识别',
+  failed: '异常原因未记录',
+  error: '异常原因未记录',
+}
+
+const recordErrorSummary = (record) => {
+  if (record?.error_summary) return record.error_summary
+  return errorSummaryByStatus[String(record?.status || '').toLowerCase()] || ''
 }
 
 const filteredHistory = computed(() => {
@@ -491,6 +516,33 @@ defineExpose({ refreshHistory, filterByStreamer })
   color: #475569;
   font-size: 12px;
   line-height: 1.4;
+}
+
+.error-reason {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-left: 3px solid #ef4444;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.error-reason details {
+  margin-top: 4px;
+}
+
+.error-reason summary {
+  color: #b91c1c;
+  cursor: pointer;
+}
+
+.error-reason code {
+  display: block;
+  margin-top: 4px;
+  color: #7f1d1d;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .streamer-id {

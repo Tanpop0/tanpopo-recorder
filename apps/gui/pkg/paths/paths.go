@@ -10,6 +10,7 @@ const (
 	CookiesFileName = "cookies.txt"
 	HistoryFileName = "history.json"
 	LogsDirName     = "logs"
+	AvatarCacheName = "avatar-cache"
 	CLILogFileName  = "cli.log"
 )
 
@@ -35,6 +36,10 @@ func ConfigDir(configPath string) string {
 
 func HistoryPath(configPath string) string {
 	return filepath.Join(ConfigDir(configPath), HistoryFileName)
+}
+
+func AvatarCacheDir(configPath string) string {
+	return filepath.Join(ConfigDir(configPath), AvatarCacheName)
 }
 
 func LogsDir(outputDir string) string {
